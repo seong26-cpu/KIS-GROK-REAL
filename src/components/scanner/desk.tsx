@@ -3,6 +3,7 @@ import {
   Activity,
   ChevronLeft,
   Crosshair,
+  Download,
   KeyRound,
   LayoutDashboard,
   Menu,
@@ -426,6 +427,7 @@ export function ScannerDesk({
           </div>
 
           <main className="mx-auto flex max-w-6xl flex-col gap-5 px-4 py-5 pb-16">
+            <ZipDownloadBanner />
             {uniError ? <p className="text-sm text-down">{uniError}</p> : null}
             {universe ? (
               <p className="text-xs text-fg-subtle">{universe.notes.join(" ")}</p>
@@ -597,6 +599,19 @@ export function ScannerDesk({
                     삭제
                   </Button>
                 </div>
+                <div className="mt-6 rounded-lg bg-bg-subtle p-4">
+                  <p className="text-sm font-semibold">Render 배포용 ZIP</p>
+                  <p className="mt-1 text-sm text-fg-muted">
+                    `node_modules`를 뺀 소스 90개입니다. 아래 버튼으로 받은 뒤 압축을 풀어 GitHub에 올리고 Render 웹
+                    서비스에 연결하세요.
+                  </p>
+                  <Button className="mt-3" variant="secondary" asChild>
+                    <a href="/kis-scanner-render.zip" download="kis-scanner-render.zip">
+                      <Download />
+                      kis-scanner-render.zip 다운로드
+                    </a>
+                  </Button>
+                </div>
               </Card>
             ) : null}
 
@@ -639,6 +654,31 @@ export function ScannerDesk({
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function ZipDownloadBanner() {
+  return (
+    <div className="rounded-xl bg-bg-elevated p-4 shadow-[var(--shadow-card)] sm:p-5">
+      <p className="text-base font-semibold">Render용 ZIP — 여기서 받으세요</p>
+      <p className="mt-1 text-sm text-fg-muted">
+        미리보기 오른쪽 위 ⋯ → 다운로드는 작업공간 전체입니다. 파일 이름이{" "}
+        <span className="font-mono">IuJpWJwxt0NTxkxW-grok-workspace.ZIP</span> 이면 Render/GitHub에 올리지 마세요.
+        아래 버튼만 누르면 <span className="font-mono">kis-scanner-render.zip</span> (소스 90개)이 저장됩니다.
+      </p>
+      <a
+        href="/kis-scanner-render.zip"
+        download="kis-scanner-render.zip"
+        className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-sm bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg"
+      >
+        <Download className="size-4" />
+        kis-scanner-render.zip 다운로드
+      </a>
+      <p className="mt-2 text-xs text-fg-subtle">
+        저장 위치: PC는 다운로드 폴더, 휴대폰은 파일/다운로드 앱. 받은 뒤 압축을 풀어 GitHub에 올리고 Render에
+        연결하세요.
+      </p>
     </div>
   );
 }

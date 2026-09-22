@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+/**
+ * Production start for hosted web services (Render, etc.).
+ * Prefers Nitro node-server output; falls back to vite preview.
+ */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
