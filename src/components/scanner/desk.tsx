@@ -209,7 +209,7 @@ export function ScannerDesk({
     setBoard([]);
     setClosing([]);
     try {
-      setScanProgress({ done: 0, total: 0, stage: "A∩B∩C 유니버스 고정" });
+      setScanProgress({ done: 0, total: 0, stage: "A∪B∪C 유니버스" });
       const uniRes = await fetchUniverseFn({ data: { ...creds, force: true, todayTop: scanSize } });
       if (!uniRes.ok) {
         setScanError(uniRes.error);
@@ -218,7 +218,7 @@ export function ScannerDesk({
       setUniverse(uniRes.universe);
       const pool = uniRes.universe.selected.filter((s) => s.code).slice(0, scanSize);
       if (!pool.length) {
-        setScanError(uniRes.universe.notes.join(" ") || "A∩B∩C 교집합이 비었습니다.");
+        setScanError(uniRes.universe.notes.join(" ") || "A∪B∪C 대상이 비었습니다.");
         return;
       }
       const tvCodes = uniRes.universe.todayTv.map((s) => s.code);
@@ -386,6 +386,14 @@ export function ScannerDesk({
               <RefreshCw className={cn("size-4 shrink-0", uniLoading && "animate-spin")} />
               {sidebarOpen ? "유니버스 갱신" : <span className="sr-only">유니버스 갱신</span>}
             </button>
+            <a
+              href="/kis-scanner-render.zip"
+              download="kis-scanner-render.zip"
+              className="mt-auto flex min-h-11 items-center gap-3 rounded-md px-3 text-sm text-fg-muted hover:bg-bg-subtle hover:text-fg"
+            >
+              <Download className="size-4 shrink-0" />
+              {sidebarOpen ? "ZIP 다운로드" : <span className="sr-only">ZIP 다운로드</span>}
+            </a>
           </nav>
           {sidebarOpen && creds ? (
             <p className="px-3 pb-4 font-mono text-[10px] text-fg-subtle">KIS {maskKey(creds.appKey)}</p>
@@ -427,12 +435,13 @@ export function ScannerDesk({
           </div>
 
           <main className="mx-auto flex max-w-6xl flex-col gap-5 px-4 py-5 pb-16">
-            <ZipDownloadBanner />
             {uniError ? <p className="text-sm text-down">{uniError}</p> : null}
             {universe ? (
               <p className="text-xs text-fg-subtle">{universe.notes.join(" ")}</p>
             ) : creds ? (
-              <p className="text-xs text-fg-subtle">유니버스: 전일대금 상위200 ∩ 5일평균대금 상위200 ∩ 당일대금 상위50 (시총 상한 없음)</p>
+              <p className="text-xs text-fg-subtle">
+                유니버스: 전일대금 상위200 ∪ 5일평균대금 상위200 ∪ 당일대금 상위50 · ETF·관리·신규상장 제외
+              </p>
             ) : null}
 
             {scanning ? (
@@ -466,7 +475,7 @@ export function ScannerDesk({
                 </p>
                 {!closing.length ? (
                   <Card>
-                    <p className="text-sm text-fg-muted">자동스캔을 실행하면 A∩B∩C 종목의 종가베팅 통과 여부가 여기에 모입니다.</p>
+                    <p className="text-sm text-fg-muted">자동스캔을 실행하면 A∪B∪C 종목의 종가베팅 통과 여부가 여기에 모입니다.</p>
                   </Card>
                 ) : (
                   closing.map((c) => (
@@ -599,19 +608,6 @@ export function ScannerDesk({
                     삭제
                   </Button>
                 </div>
-                <div className="mt-6 rounded-lg bg-bg-subtle p-4">
-                  <p className="text-sm font-semibold">Render 배포용 ZIP</p>
-                  <p className="mt-1 text-sm text-fg-muted">
-                    `node_modules`를 뺀 소스 90개입니다. 아래 버튼으로 받은 뒤 압축을 풀어 GitHub에 올리고 Render 웹
-                    서비스에 연결하세요.
-                  </p>
-                  <Button className="mt-3" variant="secondary" asChild>
-                    <a href="/kis-scanner-render.zip" download="kis-scanner-render.zip">
-                      <Download />
-                      kis-scanner-render.zip 다운로드
-                    </a>
-                  </Button>
-                </div>
               </Card>
             ) : null}
 
@@ -654,31 +650,6 @@ export function ScannerDesk({
           </div>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-function ZipDownloadBanner() {
-  return (
-    <div className="rounded-xl bg-bg-elevated p-4 shadow-[var(--shadow-card)] sm:p-5">
-      <p className="text-base font-semibold">Render용 ZIP — 여기서 받으세요</p>
-      <p className="mt-1 text-sm text-fg-muted">
-        미리보기 오른쪽 위 ⋯ → 다운로드는 작업공간 전체입니다. 파일 이름이{" "}
-        <span className="font-mono">IuJpWJwxt0NTxkxW-grok-workspace.ZIP</span> 이면 Render/GitHub에 올리지 마세요.
-        아래 버튼만 누르면 <span className="font-mono">kis-scanner-render.zip</span> (소스 90개)이 저장됩니다.
-      </p>
-      <a
-        href="/kis-scanner-render.zip"
-        download="kis-scanner-render.zip"
-        className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-sm bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg"
-      >
-        <Download className="size-4" />
-        kis-scanner-render.zip 다운로드
-      </a>
-      <p className="mt-2 text-xs text-fg-subtle">
-        저장 위치: PC는 다운로드 폴더, 휴대폰은 파일/다운로드 앱. 받은 뒤 압축을 풀어 GitHub에 올리고 Render에
-        연결하세요.
-      </p>
     </div>
   );
 }

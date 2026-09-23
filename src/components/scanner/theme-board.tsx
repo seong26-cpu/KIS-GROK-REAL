@@ -56,7 +56,7 @@ export function ThemeBoard({
   if (!rows.length) {
     return (
       <div className="rounded-xl bg-bg-elevated p-8 text-sm text-fg-muted shadow-[var(--shadow-card)]">
-        자동스캔 결과가 없습니다. 유니버스(A∩B∩C)를 스캔하면 테마별로 모입니다.
+        자동스캔 결과가 없습니다. 유니버스(A∪B∪C, ETF·관리·신규상장 제외)를 스캔하면 테마별로 모입니다.
       </div>
     );
   }

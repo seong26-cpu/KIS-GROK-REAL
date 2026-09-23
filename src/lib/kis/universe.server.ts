@@ -1,4 +1,5 @@
 import type { KisClient, VolumeRankRow } from "./client.server";
+import { exclusionReason, fetchNaverEtfCodes } from "./exclude";
 import { ymdKst } from "@/lib/scanner/indicators";
 import type { RankedStock } from "@/lib/scanner/types";
 
@@ -192,38 +193,59 @@ export async function buildUniverse(
   else if (ydayRows.length) sources.push(`KIS 전일 거래금액순 ${ydayRows.length}건`);
   if (chgKis.status === "fulfilled") sources.push(`KIS 등락률순위 ${chgRows.length}건`);
 
-  const [krxToday, krxYday, krx2, krx3, krx4] = await Promise.all([
+  const [krxToday, krxYday, krx2, krx3, krx4, etfCodes] = await Promise.all([
     fetchKrxDay(ymdKst(0)),
     fetchKrxDay(yday),
     fetchKrxDay(ymdKst(-2)),
     fetchKrxDay(ymdKst(-3)),
     fetchKrxDay(ymdKst(-4)),
+    fetchNaverEtfCodes(),
   ]);
   if (krxToday.length) sources.push(`KRX 당일 전종목 ${krxToday.length}건`);
-  if (krxYday.length) sources.push(`KRX 전일 전종목 ${krxYday.length}건`);
+  if (etfCodes.size) sources.push(`네이버 ETF ${etfCodes.size}종목 제외목록`);
+
+  const seenPrevDays = new Set<string>();
+  for (const day of [krxYday, krx2, krx3, krx4]) {
+    for (const r of day) seenPrevDays.add(r.code);
+  }
+  const newListedCodes = new Set<string>();
+  if (krxYday.length || krx2.length) {
+    for (const r of krxToday) {
+      if (!seenPrevDays.has(r.code)) newListedCodes.add(r.code);
+    }
+  }
+
+  const drop = (code: string, name: string) =>
+    Boolean(exclusionReason({ code, name, etfCodes, newListedCodes }));
+  const krxTodayF = krxToday.filter((r) => !drop(r.code, r.name));
+  const krxYdayF = krxYday.filter((r) => !drop(r.code, r.name));
+  const todayRowsF = todayRows.filter((r) => !drop(r.code, r.name));
+  const avgRowsF = avgRows.filter((r) => !drop(r.code, r.name));
+  const ydayRowsF = ydayRows.filter((r) => !drop(r.code, r.name));
+  const chgRowsF = chgRows.filter((r) => !drop(r.code, r.name));
 
   const todayTv = mergeRanked(
-    rankByTv(krxToday, Math.max(todayTop, 80)),
-    todayRows.map((r) => toRanked(r, "trading_value")),
+    rankByTv(krxTodayF, Math.max(todayTop, 80)),
+    todayRowsF.map((r) => toRanked(r, "trading_value")),
     todayTop,
   );
   const prevTv = mergeRanked(
-    rankByTv(krxYday.length ? krxYday : krxToday, PREV_TV_TOP),
-    ydayRows.map((r) => toRanked(r, "trading_value")),
+    rankByTv(krxYdayF.length ? krxYdayF : krxTodayF, PREV_TV_TOP),
+    ydayRowsF.map((r) => toRanked(r, "trading_value")),
     PREV_TV_TOP,
   );
 
   const avgMap = new Map<string, number>();
   for (const day of [krxToday, krxYday, krx2, krx3, krx4]) {
     for (const r of day) {
-      if (r.tradingValue == null) continue;
+      if (r.tradingValue == null || drop(r.code, r.name)) continue;
       avgMap.set(r.code, (avgMap.get(r.code) ?? 0) + r.tradingValue);
     }
   }
   const dayCount = [krxToday, krxYday, krx2, krx3, krx4].filter((d) => d.length).length || 1;
   const avgFromKrx: RankedStock[] = [...avgMap.entries()]
     .map(([code, sum]) => {
-      const sample = krxToday.find((r) => r.code === code) ?? krxYday.find((r) => r.code === code);
+      const sample = krxTodayF.find((r) => r.code === code) ?? krxYdayF.find((r) => r.code === code);
       return {
         code,
         name: sample?.name ?? code,
@@ -240,13 +262,13 @@ export async function buildUniverse(
     .map((r, i) => ({ ...r, rank: i + 1 }))
     .slice(0, AVG5_TV_TOP);
 
-  const avgFromKis: RankedStock[] = [...avgRows]
+  const avgFromKis: RankedStock[] = [...avgRowsF]
     .sort((a, b) => (b.avgTradingValue ?? b.tradingValue ?? 0) - (a.avgTradingValue ?? a.tradingValue ?? 0))
     .map((r, i) => ({ ...toRanked(r, "trading_value"), rank: i + 1, tradingValue: r.avgTradingValue ?? r.tradingValue }));
 
   const avg5Tv = mergeRanked(avgFromKrx, avgFromKis, AVG5_TV_TOP);
 
-  const changeRate = chgRows.slice(0, 30).map((r) => toRanked(r, "change_rate"));
+  const changeRate = chgRowsF.slice(0, 30).map((r) => toRanked(r, "change_rate"));
 
   const capByCode = new Map<string, number>();
   for (const r of krxToday) {
@@ -268,12 +290,23 @@ export async function buildUniverse(
   }
 
   const selected: UniverseStock[] = [];
+  let excluded = 0;
   for (const [code, base] of pool) {
     const inA = aSet.has(code);
     const inB = bSet.has(code);
     const inC = cSet.has(code);
+    if (!(inA || inB || inC)) continue;
+    const why = exclusionReason({
+      code,
+      name: base.name,
+      etfCodes,
+      newListedCodes,
+    });
+    if (why) {
+      excluded += 1;
+      continue;
+    }
     const cap = capByCode.get(code) ?? null;
-    if (!(inA && inB && inC)) continue;
     const todayTvRank = todayTv.find((r) => r.code === code)?.rank ?? null;
     const leaderScore = scoreLeader({
       todayTvRank,
@@ -296,8 +329,11 @@ export async function buildUniverse(
         `A 전일대금 ${prevTv.find((r) => r.code === code)?.rank ?? "-"}위`,
         `B 5일평균대금 ${avg5Tv.find((r) => r.code === code)?.rank ?? "-"}위`,
         `C 당일대금 ${todayTvRank ?? "-"}위`,
+        inA || inB || inC
+          ? `편입 ${[inA ? "A" : "", inB ? "B" : "", inC ? "C" : ""].filter(Boolean).join("∪")}`
+          : "",
         cap != null ? `시총 ${Math.round(cap).toLocaleString("ko-KR")}억원` : "시총 미확보",
-      ],
+      ].filter(Boolean),
       inA,
       inB,
       inC,
@@ -316,11 +352,11 @@ export async function buildUniverse(
     notes.push("거래대금 순위를 확보하지 못했습니다. KIS 실전 키와 시세조회 권한을 확인하세요.");
   } else if (!selected.length) {
     notes.push(
-      `A∩B∩C 교집합이 비었습니다. 전일 ${prevTv.length} · 5일평균 ${avg5Tv.length} · 당일 ${todayTv.length}. 숫자를 지어내지 않습니다.`,
+      `A∪B∪C가 비었습니다. 전일 ${prevTv.length} · 5일평균 ${avg5Tv.length} · 당일 ${todayTv.length}. ETF·관리·신규상장 ${excluded}건 제외. 숫자를 지어내지 않습니다.`,
     );
   } else {
     notes.push(
-      `A∩B∩C = ${selected.length}종목 (전일상위${PREV_TV_TOP} ∩ 5일평균상위${AVG5_TV_TOP} ∩ 당일상위${todayTop}). 시총 상한(D)은 적용하지 않습니다. 주도주 점수 순.`,
+      `A∪B∪C = ${selected.length}종목 (전일상위${PREV_TV_TOP} ∪ 5일평균상위${AVG5_TV_TOP} ∪ 당일상위${todayTop}). ETF·관리·신규상장 ${excluded}건 제외. 주도주 점수 순.`,
     );
   }
 
