@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  Sparkles,
   TrendingDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,8 @@ import {
   fetchDartEventsFn,
 } from "@/lib/scanner/fns";
 import { AnalysisPanel, DipPanel, MarketPanel, SignsPanel } from "@/components/scanner/extra-menus";
+import { SkillPicksPanel } from "@/components/scanner/skill-picks-panel";
+import { skillPicksFn } from "@/lib/scanner/skill-picks.server";
 import type { DipHit, SignHit } from "@/lib/scanner/screens";
 import type { DartEventHit } from "@/lib/dart/events";
 import type { MarketBrief } from "@/lib/scanner/types";
@@ -54,9 +57,10 @@ import type {
   TokenStatus,
   UniverseSnapshot,
 } from "@/lib/scanner/types";
+import type { SkillPicksResult } from "@/lib/scanner/skill-picks";
 import { cn, fmtPct, fmtWon } from "@/lib/utils";
 
-type NavId = "scan" | "closing" | "analysis" | "news" | "keys" | "signs" | "dip";
+type NavId = "scan" | "closing" | "analysis" | "picks" | "news" | "keys" | "signs" | "dip";
 
 export function ScannerDesk({
   initialSihwang = null,
@@ -97,6 +101,7 @@ export function ScannerDesk({
   const [marketBrief, setMarketBrief] = useState<MarketBrief | null>(null);
   const [analysisErr, setAnalysisErr] = useState<string | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [skillOut, setSkillOut] = useState<SkillPicksResult | null>(null);
   const [screenLoading, setScreenLoading] = useState(false);
   const [screenErr, setScreenErr] = useState<string | null>(null);
   const [screenNote, setScreenNote] = useState("");
@@ -437,6 +442,7 @@ export function ScannerDesk({
     { id: "scan", label: "자동스캔", icon: LayoutDashboard },
     { id: "closing", label: "종가베팅", icon: Crosshair },
     { id: "analysis", label: "분석", icon: Search },
+    { id: "picks", label: "분석 STOCK", icon: Sparkles },
     { id: "signs", label: "사전징후", icon: AlertTriangle },
     { id: "dip", label: "저가매수", icon: TrendingDown },
     { id: "news", label: "시황·뉴스", icon: Newspaper },
@@ -551,6 +557,7 @@ export function ScannerDesk({
               <span className={nav === "scan" ? "font-medium text-fg" : ""}>테마보드</span>
               <span className={nav === "closing" ? "font-medium text-fg" : ""}>종가베팅</span>
               <span className={nav === "analysis" ? "font-medium text-fg" : ""}>분석</span>
+              <span className={nav === "picks" ? "font-medium text-fg" : ""}>분석 STOCK</span>
             </div>
             <div className="flex items-center gap-2">
               {creds ? <Badge tone="info">실전</Badge> : <Badge tone="warn">키 없음</Badge>}
@@ -648,6 +655,49 @@ export function ScannerDesk({
                   ))
                 )}
               </section>
+            ) : null}
+
+            {nav === "picks" ? (
+              <SkillPicksPanel
+                creds={creds}
+                loading={analysisLoading}
+                error={analysisErr}
+                onRun={async (q) => {
+                  if (!creds || !q.trim()) return;
+                  setAnalysisLoading(true);
+                  setAnalysisErr(null);
+                  try {
+                    const res = await skillPicksFn({ data: { ...creds, query: q.trim() } });
+                    if (!res.ok) {
+                      setAnalysis(null);
+                      setMarketBrief(null);
+                      setSkillOut(null);
+                      setAnalysisErr(res.error);
+                      return;
+                    }
+                    setSkillOut({
+                      ok: true,
+                      heading: "분석 STOCK",
+                      query: res.query,
+                      mode: res.mode,
+                      workflow: res.workflow,
+                      body: res.body,
+                      cheap: res.cheap,
+                      report: res.report,
+                      market: res.market,
+                    });
+                    setMarketBrief(res.market ?? null);
+                    setAnalysis(res.report ?? null);
+                  } catch (e) {
+                    setAnalysisErr(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setAnalysisLoading(false);
+                  }
+                }}
+                result={skillOut}
+                report={analysis}
+                market={marketBrief}
+              />
             ) : null}
 
             {nav === "analysis" ? (
