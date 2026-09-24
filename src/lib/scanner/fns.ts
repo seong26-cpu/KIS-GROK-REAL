@@ -364,49 +364,89 @@ export const analyzeStockFn = createServerFn({ method: "POST" })
     }
   });
 
-export const screenUniverseFn = createServerFn({ method: "POST" })
-  .validator((d: unknown) => credsSchema.extend({ todayTop: z.number().int().min(50).max(300).optional() }).parse(d))
+const screenItem = z.object({
+  code: z.string().min(6).max(6),
+  name: z.string(),
+  price: z.number().nullable(),
+  changeRatePct: z.number().nullable(),
+  volume: z.number().nullable(),
+});
+
+export const screenChunkFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => credsSchema.extend({ items: z.array(screenItem).min(1).max(6) }).parse(d))
   .handler(async ({ data }) => {
     const { KisClient } = await import("@/lib/kis/client.server");
-    const { buildSnapshot } = await import("@/lib/kis/snapshot.server");
-    const { detectSigns, scoreDip } = await import("@/lib/scanner/screens");
-    const todayTop = data.todayTop ?? 50;
-    const id = `${data.appKey.trim()}:${todayTop}`;
-    let uni = universeCache.get(id)?.snap;
+    const { toNum } = await import("@/lib/scanner/indicators");
+    const { detectSigns, classifyDip } = await import("@/lib/scanner/screens");
+    const { fetchStockNews } = await import("@/lib/market/news.server");
     const client = new KisClient(creds(data));
     try {
       await client.ensureToken();
-      if (!uni) {
-        const { buildUniverse } = await import("@/lib/kis/universe.server");
-        uni = await buildUniverse(client, null, todayTop);
-        universeCache.set(id, { until: Date.now() + 5 * 60 * 1000, snap: uni });
-      }
-      const pool = uni.selected.slice(0, 16);
       const signs = [];
       const dips = [];
+      const reasons: string[] = [];
       const errors: string[] = [];
-      for (const s of pool) {
+      for (const item of data.items) {
         try {
-          const snap = await buildSnapshot(client, s.code, s);
-          signs.push(...detectSigns(snap));
-          const dip = scoreDip(snap);
-          if (dip) dips.push(dip);
+          const daily = await client.getDailyPrices(item.code, 100);
+          let news = null;
+          try {
+            news = await fetchStockNews(item.code, item.name);
+          } catch {
+            news = null;
+          }
+          const bar = daily[0];
+          const price = item.price ?? toNum(bar?.stck_clpr);
+          const prev = toNum(daily[1]?.stck_clpr);
+          const change =
+            item.changeRatePct ??
+            (price != null && prev != null && prev !== 0 ? ((price - prev) / prev) * 100 : null);
+          const env = {
+            stockCode: item.code,
+            stockName: item.name,
+            currentPrice: price,
+            prevClose: prev,
+            openPrice: toNum(bar?.stck_oprc),
+            highPrice: toNum(bar?.stck_hgpr),
+            lowPrice: toNum(bar?.stck_lwpr),
+            volume: item.volume ?? toNum(bar?.acml_vol),
+            prevVolume: toNum(daily[1]?.acml_vol),
+            ma5: null,
+            ma10: null,
+            ma20: null,
+            ma60: null,
+            ma120: null,
+            high20d: null,
+            low20d: null,
+            high60d: null,
+            low60d: null,
+            foreignNetBuy1d: null,
+            foreignNetBuy2d: null,
+            instNetBuy1d: null,
+            instNetBuyCum20: null,
+            pensionNetBuyCum20: null,
+            programNetBuyToday: null,
+            changeRatePct: change,
+            tradingValueToday: null,
+            tradingValueIsEstimated: false,
+            avgTradingValue5d: null,
+            dailyPrices: daily,
+            investorRows: [],
+            foreignNetBuyAmount1d: null,
+            instNetBuyAmount1d: null,
+            newsItems: news,
+            errors: [],
+          };
+          signs.push(...detectSigns(env));
+          const judged = classifyDip(env);
+          reasons.push(judged.reason);
+          if (judged.hit) dips.push(judged.hit);
         } catch (e) {
-          errors.push(`${s.name}: ${errMsg(e)}`);
+          errors.push(`${item.name}: ${errMsg(e)}`);
+          reasons.push("조회 실패");
         }
       }
-      dips.sort((a, b) => a.priority - b.priority || b.techHits.length - a.techHits.length);
-      return {
-        ok: true as const,
-        scanned: pool.length,
-        universeSize: uni.selected.length,
-        note: uni.notes[0] ?? "A∪B∪C 유니버스",
-        signs,
-        dips,
-        errors: errors.slice(0, 4),
-        skipped:
-          "호가 단주·감사 확률·매출/FCF/PER/목표주가는 원천 숫자가 없어 만들지 않습니다. 저가매수 고저는 52주가 아니라 확보 일봉입니다.",
-      };
+      return { ok: true as const, signs, dips, reasons, errors };
     } catch (e) {
       return { ok: false as const, error: errMsg(e) };
     }

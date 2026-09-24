@@ -33,7 +33,7 @@ import {
   fetchUniverseFn,
   getTokenStatusFn,
   refreshToken,
-  screenUniverseFn,
+  screenChunkFn,
 } from "@/lib/scanner/fns";
 import { AnalysisPanel, DipPanel, SignsPanel } from "@/components/scanner/extra-menus";
 import type { DipHit, SignHit } from "@/lib/scanner/screens";
@@ -93,6 +93,8 @@ export function ScannerDesk({
   const [screenErr, setScreenErr] = useState<string | null>(null);
   const [screenNote, setScreenNote] = useState("");
   const [screenSkip, setScreenSkip] = useState("");
+  const [screenDone, setScreenDone] = useState(0);
+  const [screenTotal, setScreenTotal] = useState(0);
   const [signs, setSigns] = useState<SignHit[]>([]);
   const [dips, setDips] = useState<DipHit[]>([]);
   const screenOnce = useRef(false);
@@ -312,17 +314,56 @@ export function ScannerDesk({
     if (!creds) return;
     setScreenLoading(true);
     setScreenErr(null);
+    setSigns([]);
+    setDips([]);
     try {
-      const res = await screenUniverseFn({ data: { ...creds, todayTop: scanSize } });
-      if (!res.ok) {
-        setScreenErr(res.error);
+      const uniRes = await fetchUniverseFn({ data: { ...creds, todayTop: scanSize } });
+      if (!uniRes.ok) {
+        setScreenErr(uniRes.error);
         return;
       }
-      setSigns(res.signs);
-      setDips(res.dips);
-      setScreenNote(`${res.note} · 유니버스 ${res.universeSize} 중 ${res.scanned}종목 일봉 확인`);
-      setScreenSkip(res.skipped);
-      if (res.errors.length) setScreenErr(res.errors.join(" · "));
+      const pool = uniRes.universe.selected.filter((s) => s.code);
+      setScreenTotal(pool.length);
+      setScreenDone(0);
+      setScreenNote(uniRes.universe.notes[0] ?? "A∪B∪C");
+      const allSigns: SignHit[] = [];
+      const allDips: DipHit[] = [];
+      const tally = new Map<string, number>();
+      const errors: string[] = [];
+      for (let i = 0; i < pool.length; i += 5) {
+        const chunk = pool.slice(i, i + 5);
+        const res = await screenChunkFn({
+          data: {
+            ...creds,
+            items: chunk.map((s) => ({
+              code: s.code,
+              name: s.name,
+              price: s.price,
+              changeRatePct: s.changeRatePct,
+              volume: s.volume,
+            })),
+          },
+        });
+        if (!res.ok) {
+          errors.push(res.error);
+        } else {
+          allSigns.push(...res.signs);
+          allDips.push(...res.dips);
+          for (const reason of res.reasons) tally.set(reason, (tally.get(reason) ?? 0) + 1);
+          errors.push(...res.errors);
+        }
+        setScreenDone(Math.min(pool.length, i + chunk.length));
+        setSigns([...allSigns]);
+        setDips([...allDips].sort((a, b) => a.priority - b.priority));
+      }
+      const breakdown = [...tally.entries()].map(([k, n]) => `${k} ${n}`).join(" · ");
+      setScreenNote(
+        `A∪B∪C ${pool.length}종목 전부 일봉·뉴스를 조회했습니다. ${uniRes.universe.notes[0] ?? ""} 탈락 집계: ${breakdown || "없음"}`,
+      );
+      setScreenSkip(
+        "추출: ① A 전일대금200 ∪ B 5일평균200 ∪ C 당일대금상위 ② 종목마다 KIS 일봉 + 뉴스 제목 ③ 사전징후는 제목 키워드와 캔들만 ④ 저가매수는 성장 테마·고저 범위·거래량·기술신호 2개를 동시에 통과한 것만. 없는 재무 숫자는 만들지 않습니다.",
+      );
+      if (errors.length) setScreenErr(errors.slice(0, 3).join(" · "));
     } catch (e) {
       setScreenErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -591,8 +632,9 @@ export function ScannerDesk({
                   disabled={screenLoading || !creds}
                   onClick={() => void runScreen()}
                 >
-                  {screenLoading ? "A∪B∪C에서 추출 중…" : "다시 추출"}
+                  {screenLoading ? `추출 중 ${screenDone}/${screenTotal || "…"}` : "A∪B∪C 전체 다시 추출"}
                 </button>
+                {screenLoading ? <Progress value={screenTotal ? (screenDone / screenTotal) * 100 : 5} /> : null}
                 {screenErr ? <p className="text-sm text-down">{screenErr}</p> : null}
                 {nav === "signs" ? <SignsPanel signs={signs} note={screenNote} skipped={screenSkip} /> : null}
                 {nav === "dip" ? <DipPanel dips={dips} note={screenNote} skipped={screenSkip} /> : null}

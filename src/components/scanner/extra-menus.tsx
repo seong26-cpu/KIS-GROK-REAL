@@ -73,6 +73,10 @@ export function SignsPanel({
       <h2 className="text-lg font-semibold">사전징후</h2>
       <p className="text-sm text-fg-muted">{note}</p>
       <p className="text-xs text-fg-subtle">{skipped}</p>
+      <p className="text-xs text-fg-subtle">
+        더 채우려면: 감사·내부자·담보는 DART Open API 키로 공시 원문을 붙이고, 단주 매매는 KIS 호가 API를 종목마다
+        조회해야 합니다. 그 데이터가 오기 전에는 확률을 적지 않습니다.
+      </p>
       {!signs.length ? (
         <Card>
           <p className="text-sm text-fg-muted">이번에 스캔한 A∪B∪C 종목에서 기사·일봉으로 확인된 징후가 없습니다.</p>
@@ -106,6 +110,10 @@ export function DipPanel({ dips, note, skipped }: { dips: DipHit[]; note: string
         이상을 동시에 통과한 종목만 남깁니다. {note}
       </p>
       <p className="text-xs text-fg-subtle">{skipped}</p>
+      <p className="text-xs text-fg-subtle">
+        매출·이익·FCF·부채·R&D·PER은 DART 재무제표 API(인증키)가 있어야 채웁니다. 52주 고저는 KIS 일봉을 1년치로
+        이어 받으면 됩니다. 지금은 받아 온 일봉만 쓰고, 없는 칸은 비웁니다.
+      </p>
       {!dips.length ? (
         <Card>
           <p className="text-sm text-fg-muted">조건을 모두 통과한 종목이 없습니다. 재무 숫자를 채워 넣지 않았습니다.</p>

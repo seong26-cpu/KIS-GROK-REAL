@@ -127,27 +127,31 @@ export function detectSigns(env: LiveSnapshot): SignHit[] {
 }
 
 export function scoreDip(env: LiveSnapshot): DipHit | null {
+  return classifyDip(env).hit;
+}
+
+export function classifyDip(env: LiveSnapshot): { hit: DipHit | null; reason: string } {
   const theme = classifyTheme({ name: env.stockName ?? "", newsTitles: (env.newsItems ?? []).map((n) => n.title) });
-  if (!GROWTH.has(theme.id)) return null;
+  if (!GROWTH.has(theme.id)) return { hit: null, reason: "성장테마 아님(이름·뉴스에 AI/반도체/로봇/바이오 없음)" };
   const daily = env.dailyPrices;
   const window = Math.min(daily.length, 120);
-  if (window < 40 || env.currentPrice == null) return null;
+  if (window < 40 || env.currentPrice == null) return { hit: null, reason: "일봉 40개 미만 또는 현재가 없음" };
   const slice = daily.slice(0, window);
   const highs = slice.map((b) => toNum(b.stck_hgpr)).filter((n): n is number => n != null);
   const lows = slice.map((b) => toNum(b.stck_lwpr)).filter((n): n is number => n != null);
-  if (!highs.length || !lows.length) return null;
+  if (!highs.length || !lows.length) return { hit: null, reason: "고가·저가 없음" };
   const high = Math.max(...highs);
   const low = Math.min(...lows);
   const px = env.currentPrice;
   const fromHighPct = ((px - high) / high) * 100;
   const fromLowPct = ((px - low) / low) * 100;
-  if (fromHighPct > -20 || fromHighPct < -40) return null;
-  if (fromLowPct < 5 || fromLowPct > 20) return null;
+  if (fromHighPct > -20 || fromHighPct < -40) return { hit: null, reason: "고점 대비 -20~-40% 밖" };
+  if (fromLowPct < 5 || fromLowPct > 20) return { hit: null, reason: "저점 대비 +5~+20% 밖" };
 
   const v5 = slice.slice(0, 5).map((b) => toNum(b.acml_vol)).filter((n): n is number => n != null);
   const v20 = slice.slice(0, 20).map((b) => toNum(b.acml_vol)).filter((n): n is number => n != null);
   const volRatio = v5.length === 5 && v20.length === 20 ? v5.reduce((a, b) => a + b, 0) / 5 / (v20.reduce((a, b) => a + b, 0) / 20) : null;
-  if (volRatio == null || volRatio < 1.2) return null;
+  if (volRatio == null || volRatio < 1.2) return { hit: null, reason: "5일 거래량이 20일 평균의 1.2배 미만" };
 
   const rsi = computeRsi(slice);
   const macd = computeMacd(slice);
@@ -175,7 +179,7 @@ export function scoreDip(env: LiveSnapshot): DipHit | null {
     .map((b) => toNum(b.acml_vol) ?? 0)
     .reduce((a, b) => a + b, 0);
   if (dnVol > 0 && upVol > dnVol * 1.3) techHits.push("상승 거래량 > 하락 거래량 130%");
-  if (techHits.length < 2) return null;
+  if (techHits.length < 2) return { hit: null, reason: "기술 신호 2개 미만" };
 
   const missing = [
     "매출 YoY",
@@ -187,7 +191,7 @@ export function scoreDip(env: LiveSnapshot): DipHit | null {
     "분석가 목표주가",
   ];
   const priority: 1 | 2 | 3 = techHits.length >= 3 ? 1 : 2;
-  return {
+  const hit: DipHit = {
     code: env.stockCode,
     name: env.stockName ?? env.stockCode,
     theme: theme.name,
@@ -207,4 +211,5 @@ export function scoreDip(env: LiveSnapshot): DipHit | null {
     news: (env.newsItems ?? []).slice(0, 3).map((n) => n.title),
     note: `고저 구간은 52주가 아니라 확보한 ${window}거래일 일봉입니다. 재무 항목은 DART 숫자가 없어 비워 둡니다.`,
   };
+  return { hit, reason: "통과" };
 }
