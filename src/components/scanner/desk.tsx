@@ -35,9 +35,11 @@ import {
   refreshToken,
   screenChunkFn,
   serverKeyStatusFn,
+  fetchDartEventsFn,
 } from "@/lib/scanner/fns";
 import { AnalysisPanel, DipPanel, SignsPanel } from "@/components/scanner/extra-menus";
 import type { DipHit, SignHit } from "@/lib/scanner/screens";
+import type { DartEventHit } from "@/lib/dart/events";
 import { rankClosingBetCandidates } from "@/lib/scanner/closing-bet";
 import { assignRelativeStrength } from "@/lib/scanner/themes";
 import { clearCreds, loadCreds, maskKey, saveCreds } from "@/lib/scanner/keys";
@@ -101,6 +103,7 @@ export function ScannerDesk({
   const [screenTotal, setScreenTotal] = useState(0);
   const [signs, setSigns] = useState<SignHit[]>([]);
   const [dips, setDips] = useState<DipHit[]>([]);
+  const [events, setEvents] = useState<DartEventHit[]>([]);
   const screenOnce = useRef(false);
   const cancelRef = useRef(false);
 
@@ -343,7 +346,17 @@ export function ScannerDesk({
     setScreenErr(null);
     setSigns([]);
     setDips([]);
+    setEvents([]);
     try {
+      let eventNote = "";
+      const eventRes = await fetchDartEventsFn({ data: {} });
+      if (eventRes.ok) {
+        setEvents(eventRes.events);
+        eventNote = eventRes.note;
+        setScreenSkip(eventNote);
+      } else {
+        setScreenErr(eventRes.error);
+      }
       const uniRes = await fetchUniverseFn({ data: { ...creds, todayTop: scanSize } });
       if (!uniRes.ok) {
         setScreenErr(uniRes.error);
@@ -388,7 +401,7 @@ export function ScannerDesk({
         `A∪B∪C ${pool.length}종목 전부 일봉·뉴스를 조회했습니다. ${uniRes.universe.notes[0] ?? ""} 탈락 집계: ${breakdown || "없음"}`,
       );
       setScreenSkip(
-        "추출: ① A 전일대금200 ∪ B 5일평균200 ∪ C 당일대금상위 ② 종목마다 KIS 일봉 + 뉴스 제목 ③ 사전징후는 제목 키워드와 캔들만 ④ 저가매수는 성장 테마·고저 범위·거래량·기술신호 2개를 동시에 통과한 것만. 없는 재무 숫자는 만들지 않습니다.",
+        `${eventNote} 가격 조건 목록만 거래대금 유니버스를 쓰고, 업종은 전력·에너지·지주·조선·방산·2차전지를 포함합니다. 공시에 없는 발표일은 만들지 않습니다.`,
       );
       if (errors.length) setScreenErr(errors.slice(0, 3).join(" · "));
     } catch (e) {
@@ -667,7 +680,7 @@ export function ScannerDesk({
                 {screenLoading ? <Progress value={screenTotal ? (screenDone / screenTotal) * 100 : 5} /> : null}
                 {screenErr ? <p className="text-sm text-down">{screenErr}</p> : null}
                 {nav === "signs" ? <SignsPanel signs={signs} note={screenNote} skipped={screenSkip} /> : null}
-                {nav === "dip" ? <DipPanel dips={dips} note={screenNote} skipped={screenSkip} /> : null}
+                {nav === "dip" ? <DipPanel dips={dips} events={events} note={screenNote} skipped={screenSkip} /> : null}
               </section>
             ) : null}
 

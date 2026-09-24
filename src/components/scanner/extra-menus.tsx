@@ -2,6 +2,7 @@ import { SrChart } from "@/components/scanner/mini-charts";
 import { Card, CardDesc, CardHeader, CardTitle } from "@/components/ui/card";
 import type { AnalysisReport } from "@/lib/scanner/types";
 import type { DipHit, SignHit } from "@/lib/scanner/screens";
+import type { DartEventHit } from "@/lib/dart/events";
 import { fmtWon } from "@/lib/utils";
 
 export function AnalysisPanel({ report }: { report: AnalysisReport }) {
@@ -99,24 +100,73 @@ export function SignsPanel({
   );
 }
 
-export function DipPanel({ dips, note, skipped }: { dips: DipHit[]; note: string; skipped: string }) {
+export function DipPanel({
+  dips,
+  events,
+  note,
+  skipped,
+}: {
+  dips: DipHit[];
+  events: DartEventHit[];
+  note: string;
+  skipped: string;
+}) {
   const top = dips.filter((d) => d.priority === 1);
   const wait = dips.filter((d) => d.priority !== 1);
+  const groups = ["실적", "신제품", "임상", "계약", "산업"] as const;
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-lg font-semibold">저가매수</h2>
       <p className="text-sm text-fg-muted">
-        A∪B∪C 안에서 AI·반도체·로봇·바이오만 보고, 고점 대비 -20~-40%, 저점 대비 +5~+20%, 거래량 1.2배, 기술 신호 2개
-        이상을 동시에 통과한 종목만 남깁니다. {note}
+        거래대금 상위는 이미 급등한 종목이 많아, 아래 목록은 DART 전체 공시 제목에서 고릅니다. 업종은 전력·에너지·지주·조선·방산·2차전지·바이오·로봇·반도체·AI
+        를 먼저 보여 줍니다. {note}
       </p>
       <p className="text-xs text-fg-subtle">{skipped}</p>
+      {!events.length ? (
+        <Card>
+          <p className="text-sm text-fg-muted">이번 검색에서 조건에 맞는 공시가 없습니다.</p>
+        </Card>
+      ) : null}
+      {groups.map((category) => {
+        const rows = events.filter((e) => e.category === category);
+        if (!rows.length) return null;
+        return (
+          <div key={category} className="flex flex-col gap-2">
+            <p className="text-sm font-semibold">{category}</p>
+            {rows.map((e) => (
+              <Card key={`${e.code}-${e.category}-${e.title}`}>
+                <CardHeader>
+                  <CardTitle>
+                    {e.theme} · {e.name} <span className="font-mono text-sm font-normal text-fg-subtle">{e.code}</span>
+                  </CardTitle>
+                  <CardDesc>
+                    {e.filedOn} 접수
+                    {e.link ? (
+                      <>
+                        {" "}
+                        ·{" "}
+                        <a className="underline" href={e.link} target="_blank" rel="noreferrer">
+                          공시 원문
+                        </a>
+                      </>
+                    ) : null}
+                  </CardDesc>
+                </CardHeader>
+                <p className="text-sm">{e.title}</p>
+                <p className="mt-1 text-xs text-fg-subtle">{e.note}</p>
+              </Card>
+            ))}
+          </div>
+        );
+      })}
+      <h3 className="mt-4 text-sm font-semibold">참고: 거래대금 조건 통과 종목</h3>
       <p className="text-xs text-fg-subtle">
-        재무 숫자는 DART 연결 재무제표가 있는 항목만 적습니다. R&D처럼 계정에 없으면 미확보로 남깁니다. 52주 고저는
-        일봉 1년치가 더 필요합니다.
+        이 목록은 돈이 이미 몰린 종목입니다. 급등 뒤 조정인지와 별개로, 가격 조건만 맞은 참고치입니다. 전력·에너지·지주·조선·방산·2차전지도
+        포함합니다.
       </p>
       {!dips.length ? (
         <Card>
-          <p className="text-sm text-fg-muted">조건을 모두 통과한 종목이 없습니다. 재무 숫자를 채워 넣지 않았습니다.</p>
+          <p className="text-sm text-fg-muted">가격 조건을 통과한 종목은 없습니다.</p>
         </Card>
       ) : null}
       {top.length ? <p className="text-sm font-semibold">기술 신호 3개 이상</p> : null}

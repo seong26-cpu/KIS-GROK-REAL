@@ -2,7 +2,21 @@ import type { LiveSnapshot, NewsItem } from "./types";
 import { computeMa, computeMacd, computeRsi, toNum } from "./indicators";
 import { classifyTheme } from "./themes";
 
-const GROWTH = new Set(["ai", "semi-eqp", "semi-mat", "robot", "bio"]);
+const GROWTH = new Set([
+  "ai",
+  "semi-eqp",
+  "semi-mat",
+  "robot",
+  "bio",
+  "defense",
+  "battery",
+  "ship",
+  "power",
+  "nuclear",
+  "sofc",
+  "energy",
+  "holdco",
+]);
 
 export type SignHit = {
   code: string;

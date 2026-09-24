@@ -32,6 +32,18 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+export const fetchDartEventsFn = createServerFn({ method: "POST" })
+  .validator((_d: unknown) => ({}))
+  .handler(async () => {
+    try {
+      const { scanDartEvents } = await import("@/lib/dart/events.server");
+      const result = await scanDartEvents();
+      return { ok: true as const, ...result };
+    } catch (e) {
+      return { ok: false as const, error: errMsg(e) };
+    }
+  });
+
 export const serverKeyStatusFn = createServerFn({ method: "POST" })
   .validator((_d: unknown) => ({}))
   .handler(async () => {
