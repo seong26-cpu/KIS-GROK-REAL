@@ -7,7 +7,7 @@ const GROWTH = new Set(["ai", "semi-eqp", "semi-mat", "robot", "bio"]);
 export type SignHit = {
   code: string;
   name: string;
-  kind: "급등" | "급락";
+  kind: "급등" | "급락" | "공시";
   title: string;
   detail: string;
   evidence: string;
@@ -31,6 +31,7 @@ export type DipHit = {
   stop: number | null;
   priority: 1 | 2 | 3;
   news: string[];
+  dartLines?: string[];
   note: string;
 };
 
@@ -63,8 +64,21 @@ export function detectSigns(env: LiveSnapshot): SignHit[] {
   const pledge = hitNews(text, [/주식담보/, /담보대출/, /담보.?제공/]);
   if (pledge) push("급락", "주식담보", "담보 관련 제목만 확인했습니다. 과다 여부는 공시 잔액이 없어 판단하지 않습니다.", pledge);
 
-  const insider = hitNews(text, [/최대주주.{0,8}(매수|취득)/, /임원.{0,6}(장내매수|매수)/, /대표이사.{0,6}매수/]);
-  if (insider) push("급등", "내부자 매수", "장내매수·취득 제목이 있습니다. 수량·가격은 기사에 없으면 적지 않습니다.", insider);
+  const insider = hitNews(text, [/최대주주.{0,12}(매수|취득)/, /임원.{0,8}(장내매수|매수|취득)/, /대표이사.{0,6}매수/, /임원ㆍ주요주주특정증권/, /임원·주요주주특정증권/, /최대주주등소유주식변동/]);
+  if (insider) {
+    const sell = /처분|매도|감소/.test(text);
+    const buy = /취득|매수|증가/.test(text);
+    push(
+      sell && !buy ? "급락" : buy && !sell ? "급등" : "공시",
+      "내부자 지분 공시",
+      sell && !buy
+        ? "처분·매도 표현이 있습니다. 수량은 공시 본문이 없으면 적지 않습니다."
+        : buy && !sell
+          ? "취득·매수 표현이 있습니다. 수량은 공시 본문이 없으면 적지 않습니다."
+          : "임원·주요주주 소유 변동 공시입니다. 제목만으로는 매수인지 매도인지 단정하지 않습니다.",
+      insider,
+    );
+  }
 
   const cb = hitNews(text, [/리픽싱/, /전환가액/, /전환사채/, /\bCB\b/, /\bBW\b/]);
   if (cb) push("급등", "CB/BW 언급", "전환사채·리픽싱 제목입니다. 최저 리픽싱 도달 여부는 공시 숫자 없이 단정하지 않습니다.", cb);

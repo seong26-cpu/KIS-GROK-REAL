@@ -149,6 +149,11 @@ export async function buildAnalysis(
     .filter((x) => x.close > 0);
 
   const won = (n: number | null) => (n == null ? "미산출" : `${Math.round(n).toLocaleString("ko-KR")}원`);
+  const { fetchDartFacts } = await import("@/lib/dart/client.server");
+  const dart = await fetchDartFacts(env.stockCode, p);
+  if (dart?.titles.length) {
+    news.unshift(...dart.titles.filter((t) => !news.some((n) => n.title === t.title)).slice(0, 6));
+  }
   const name = env.stockName ?? env.stockCode;
   const supplyNote = supplyRows.length
     ? `최근 수급 ${supplyRows
@@ -163,6 +168,7 @@ export async function buildAnalysis(
     `${name}(${env.stockCode}) 현재가 ${won(p)}, 당일 ${env.changeRatePct == null ? "등락 미확보" : `${env.changeRatePct >= 0 ? "+" : ""}${env.changeRatePct.toFixed(2)}%`}. 시황은 ${marketState}. ${marketReason}`,
     `${maNote}. ${volumeRatio != null ? `거래량은 직전 3일 평균 대비 ${volumeRatio}배` : "거래량 배수는 미산출"}. ${macdNote}. RSI ${rsi ?? "미산출"}. ${stochNote}.`,
     `${supplyNote} ${newsLine}`,
+    dart?.lines.length ? `DART ${dart.lines.join(" / ")}` : "DART 재무 숫자를 붙이지 못했습니다.",
     p == null
       ? "현재가가 없어 매수·매도 가격을 만들지 않습니다."
       : `지지 ${won(sr.support1)} / ${won(sr.support2)}, 저항 ${won(sr.resistance1)} / ${won(sr.resistance2)}. 추격 매수보다 지지 안착을 확인하고, 저항에서는 분할 축소를 규칙으로 둡니다.`,

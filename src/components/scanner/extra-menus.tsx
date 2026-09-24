@@ -74,8 +74,8 @@ export function SignsPanel({
       <p className="text-sm text-fg-muted">{note}</p>
       <p className="text-xs text-fg-subtle">{skipped}</p>
       <p className="text-xs text-fg-subtle">
-        더 채우려면: 감사·내부자·담보는 DART Open API 키로 공시 원문을 붙이고, 단주 매매는 KIS 호가 API를 종목마다
-        조회해야 합니다. 그 데이터가 오기 전에는 확률을 적지 않습니다.
+        더 채우려면: 매수·매도 수량은 DART 공시 본문(rcpNo)을 더 열어야 합니다. 단주 매매는 KIS 호가 API가 필요합니다.
+        제목과 재무제표에 없는 확률·수량은 만들지 않습니다.
       </p>
       {!signs.length ? (
         <Card>
@@ -111,8 +111,8 @@ export function DipPanel({ dips, note, skipped }: { dips: DipHit[]; note: string
       </p>
       <p className="text-xs text-fg-subtle">{skipped}</p>
       <p className="text-xs text-fg-subtle">
-        매출·이익·FCF·부채·R&D·PER은 DART 재무제표 API(인증키)가 있어야 채웁니다. 52주 고저는 KIS 일봉을 1년치로
-        이어 받으면 됩니다. 지금은 받아 온 일봉만 쓰고, 없는 칸은 비웁니다.
+        재무 숫자는 DART 연결 재무제표가 있는 항목만 적습니다. R&D처럼 계정에 없으면 미확보로 남깁니다. 52주 고저는
+        일봉 1년치가 더 필요합니다.
       </p>
       {!dips.length ? (
         <Card>
@@ -136,7 +136,14 @@ export function DipPanel({ dips, note, skipped }: { dips: DipHit[]; note: string
           <p className="mt-2 text-sm">
             테스트 {fmtWon(d.step1)} (저점 +10%) · 확신 {fmtWon(d.step2)} · 추가 {fmtWon(d.step3)} · 손절 {fmtWon(d.stop)}
           </p>
-          <p className="mt-1 text-xs text-fg-subtle">미확보: {d.missing.join(", ")}</p>
+          {d.dartLines?.length ? (
+            <ul className="mt-2 text-sm">
+              {d.dartLines.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          ) : null}
+          <p className="mt-1 text-xs text-fg-subtle">미확보: {d.missing.length ? d.missing.join(", ") : "없음"}</p>
           {d.news.length ? (
             <ul className="mt-2 text-sm text-fg-muted">
               {d.news.map((t) => (

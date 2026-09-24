@@ -389,14 +389,17 @@ export const screenChunkFn = createServerFn({ method: "POST" })
       for (const item of data.items) {
         try {
           const daily = await client.getDailyPrices(item.code, 100);
+          const bar = daily[0];
+          const price = item.price ?? toNum(bar?.stck_clpr);
+          const { fetchDartFacts } = await import("@/lib/dart/client.server");
+          const dart = await fetchDartFacts(item.code, price);
           let news = null;
           try {
             news = await fetchStockNews(item.code, item.name);
           } catch {
             news = null;
           }
-          const bar = daily[0];
-          const price = item.price ?? toNum(bar?.stck_clpr);
+          const mergedNews = [...(dart?.titles ?? []), ...(news ?? [])];
           const prev = toNum(daily[1]?.stck_clpr);
           const change =
             item.changeRatePct ??
@@ -434,13 +437,21 @@ export const screenChunkFn = createServerFn({ method: "POST" })
             investorRows: [],
             foreignNetBuyAmount1d: null,
             instNetBuyAmount1d: null,
-            newsItems: news,
+            newsItems: mergedNews,
             errors: [],
           };
           signs.push(...detectSigns(env));
           const judged = classifyDip(env);
           reasons.push(judged.reason);
-          if (judged.hit) dips.push(judged.hit);
+          if (judged.hit) {
+            if (dart) {
+              judged.hit.missing = judged.hit.missing.filter((m) => !dart.filled.includes(m));
+              judged.hit.dartLines = dart.lines;
+              judged.hit.news = mergedNews.slice(0, 4).map((n) => `${n.pubDate} ${n.title}`.trim());
+              if (dart.note) judged.hit.note = dart.note;
+            }
+            dips.push(judged.hit);
+          }
         } catch (e) {
           errors.push(`${item.name}: ${errMsg(e)}`);
           reasons.push("조회 실패");
