@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readSecret } from "@/lib/secret-env.server";
+
 import type { NewsItem } from "@/lib/scanner/types";
 
 const BASE = "https://opendart.fss.or.kr/api";
@@ -16,16 +17,7 @@ let corpCache = new Map<string, string | null>();
 const factCache = new Map<string, { until: number; facts: DartFacts }>();
 
 function dartKey(): string | null {
-  const fromEnv = process.env.DART_API_KEY?.trim();
-  if (fromEnv) return fromEnv;
-  try {
-    const text = readFileSync(".env", "utf8");
-    const line = text.split("\n").find((l) => l.startsWith("DART_API_KEY="));
-    const v = line?.slice("DART_API_KEY=".length).trim();
-    return v || null;
-  } catch {
-    return null;
-  }
+  return readSecret("DART_API_KEY");
 }
 
 function numAmount(v: unknown): number | null {

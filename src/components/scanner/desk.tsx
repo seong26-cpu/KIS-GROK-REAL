@@ -34,6 +34,7 @@ import {
   getTokenStatusFn,
   refreshToken,
   screenChunkFn,
+  serverKeyStatusFn,
 } from "@/lib/scanner/fns";
 import { AnalysisPanel, DipPanel, SignsPanel } from "@/components/scanner/extra-menus";
 import type { DipHit, SignHit } from "@/lib/scanner/screens";
@@ -62,6 +63,9 @@ export function ScannerDesk({
   initialSihwangError?: string | null;
 }) {
   const [creds, setCreds] = useState<BrokerCreds | null>(null);
+  const [serverManaged, setServerManaged] = useState(false);
+  const [keyMask, setKeyMask] = useState<string | null>(null);
+  const [dartOn, setDartOn] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [nav, setNav] = useState<NavId>("scan");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -101,14 +105,37 @@ export function ScannerDesk({
   const cancelRef = useRef(false);
 
   useEffect(() => {
-    const stored = loadCreds();
-    setCreds(stored);
-    setHydrated(true);
-    if (stored) {
-      setDraftKey(stored.appKey);
-      setDraftSecret(stored.appSecret);
-    }
-    if (typeof window !== "undefined" && window.innerWidth >= 768) setSidebarOpen(true);
+    let stop = false;
+    void (async () => {
+      try {
+        const status = await serverKeyStatusFn({ data: {} });
+        if (stop) return;
+        setDartOn(status.dart);
+        if (status.configured) {
+          clearCreds();
+          setServerManaged(true);
+          setKeyMask(status.mask);
+          setCreds({ appKey: "", appSecret: "" });
+        } else {
+          const stored = loadCreds();
+          setCreds(stored);
+          if (stored) {
+            setDraftKey(stored.appKey);
+            setDraftSecret(stored.appSecret);
+          }
+        }
+      } catch {
+        if (!stop) setCreds(loadCreds());
+      } finally {
+        if (!stop) {
+          setHydrated(true);
+          if (typeof window !== "undefined" && window.innerWidth >= 768) setSidebarOpen(true);
+        }
+      }
+    })();
+    return () => {
+      stop = true;
+    };
   }, []);
 
   const loadSihwang = useCallback(async () => {
@@ -478,8 +505,11 @@ export function ScannerDesk({
               {sidebarOpen ? "ZIP 다운로드" : <span className="sr-only">ZIP 다운로드</span>}
             </a>
           </nav>
-          {sidebarOpen && creds ? (
-            <p className="px-3 pb-4 font-mono text-[10px] text-fg-subtle">KIS {maskKey(creds.appKey)}</p>
+          {sidebarOpen && (serverManaged || creds) ? (
+            <p className="px-3 pb-4 font-mono text-[10px] text-fg-subtle">
+              {serverManaged ? `서버 키 ${keyMask ?? ""}` : creds ? `KIS ${maskKey(creds.appKey)}` : ""}
+              {dartOn ? " · DART" : ""}
+            </p>
           ) : null}
         </aside>
 
@@ -671,22 +701,25 @@ export function ScannerDesk({
             {nav === "keys" ? (
               <Card>
                 <CardHeader>
-                  <CardTitle>한국투자증권 실전 APP KEY</CardTitle>
+                  <CardTitle>한국투자증권 실전 키</CardTitle>
                   <CardDesc>
-                    모의투자 키는 거래대금 순위를 주지 않습니다. KIS Developers 실전 키만 사용합니다. 이 기기에만
-                    저장됩니다.
+                    {serverManaged
+                      ? "키는 이 서버 환경변수에만 있습니다. 화면과 저장소에는 넣지 않습니다. 브라우저에 남아 있던 복사본은 지웠습니다."
+                      : "서버에 KIS_APP_KEY / KIS_APP_SECRET 이 없습니다. Render Environment에 넣거나, 아래에서 이 기기에만 임시로 입력하세요."}
                   </CardDesc>
                 </CardHeader>
                 <Progress value={remainPct} />
                 <p className="mt-2 text-xs text-fg-subtle">
-                  {token.hasToken
-                    ? `토큰 ${Math.floor((token.secondsRemaining ?? 0) / 60)}분 남음`
-                    : "토큰 없음"}
+                  {serverManaged ? `사용 중 ${keyMask ?? ""}` : "서버 키 없음"}
+                  {dartOn ? " · DART 연결됨" : " · DART 키 없음"}
+                  {token.hasToken ? ` · 토큰 ${Math.floor((token.secondsRemaining ?? 0) / 60)}분 남음` : " · 토큰 없음"}
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button onClick={() => setKeyOpen(true)}>
-                    <KeyRound />키 입력
-                  </Button>
+                  {serverManaged ? null : (
+                    <Button onClick={() => setKeyOpen(true)}>
+                      <KeyRound />키 입력
+                    </Button>
+                  )}
                   <Button
                     variant="secondary"
                     disabled={!creds}
@@ -698,15 +731,17 @@ export function ScannerDesk({
                   >
                     토큰 갱신
                   </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      clearCreds();
-                      setCreds(null);
-                    }}
-                  >
-                    삭제
-                  </Button>
+                  {serverManaged ? null : (
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        clearCreds();
+                        setCreds(null);
+                      }}
+                    >
+                      삭제
+                    </Button>
+                  )}
                 </div>
               </Card>
             ) : null}

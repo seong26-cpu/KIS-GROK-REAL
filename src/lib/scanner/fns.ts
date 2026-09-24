@@ -17,19 +17,27 @@ import { evaluateClosingBetCandidate } from "./closing-bet";
 import { marketHoursNote, toNum } from "./indicators";
 import { classifyTheme } from "./themes";
 import { tapeToIndices } from "@/lib/market/sihwang.server";
+import { resolveKisCreds } from "@/lib/secret-env.server";
 
 const credsSchema = z.object({
-  appKey: z.string().min(8),
-  appSecret: z.string().min(8),
+  appKey: z.string().optional().default(""),
+  appSecret: z.string().optional().default(""),
 });
 
-function creds(data: z.infer<typeof credsSchema>): BrokerCreds {
-  return { appKey: data.appKey.trim(), appSecret: data.appSecret.trim() };
+function creds(data: { appKey?: string; appSecret?: string }): BrokerCreds {
+  return resolveKisCreds(data.appKey, data.appSecret);
 }
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+export const serverKeyStatusFn = createServerFn({ method: "POST" })
+  .validator((_d: unknown) => ({}))
+  .handler(async () => {
+    const { kisKeyStatus } = await import("@/lib/secret-env.server");
+    return kisKeyStatus();
+  });
 
 export type ConnectResult =
   | { ok: true; token: TokenStatus; report: Record<string, string> }
@@ -99,11 +107,12 @@ const universeCache = new Map<string, { until: number; snap: UniverseSnapshot }>
 export const fetchUniverseFn = createServerFn({ method: "POST" })
   .validator((d: unknown) => credsSchema.extend({ force: z.boolean().optional(), todayTop: z.number().int().min(50).max(300).optional() }).parse(d))
   .handler(async ({ data }): Promise<UniverseResult> => {
+    const resolved = creds(data);
     const { KisClient } = await import("@/lib/kis/client.server");
     const { buildUniverse } = await import("@/lib/kis/universe.server");
-    const client = new KisClient(creds(data));
+    const client = new KisClient(resolved);
     const todayTop = data.todayTop ?? 50;
-    const id = `${data.appKey.trim()}:${todayTop}`;
+    const id = `${resolved.appKey.trim()}:${todayTop}`;
     const hit = universeCache.get(id);
     if (!data.force && hit && Date.now() < hit.until) {
       return { ok: true, universe: hit.snap, marketHours: marketHoursNote() };
@@ -330,7 +339,7 @@ export const analyzeStockFn = createServerFn({ method: "POST" })
     const q = data.query.trim();
     let code = /^\d{1,6}$/.test(q) ? q.padStart(6, "0") : "";
     if (!code) {
-      const prefix = data.appKey.trim();
+      const prefix = creds(data).appKey.trim();
       const hit = [...universeCache.entries()].find(([k]) => k === prefix || k.startsWith(`${prefix}:`))?.[1];
       const pool = hit?.snap.selected ?? [];
       const extra = [...(hit?.snap.todayTv ?? []), ...(hit?.snap.prevTv ?? [])];
