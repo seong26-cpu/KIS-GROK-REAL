@@ -259,6 +259,17 @@ export type AnalysisReport = {
   marketCapEok: number | null;
   disclaimer: string;
   errors: string[];
+  summary?: string;
+  timing?: { title: string; body: string }[];
+  levels?: {
+    support1: number | null;
+    support2: number | null;
+    resistance1: number | null;
+    resistance2: number | null;
+    stop: number | null;
+  };
+  chartBars?: { date: string; close: number; volume: number | null }[];
+  stochNote?: string;
 };
 
 export const MIN_PRICE = 1000;

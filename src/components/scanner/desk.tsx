@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   ChevronLeft,
   Crosshair,
   Download,
@@ -12,6 +13,7 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  TrendingDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +33,10 @@ import {
   fetchUniverseFn,
   getTokenStatusFn,
   refreshToken,
+  screenUniverseFn,
 } from "@/lib/scanner/fns";
+import { AnalysisPanel, DipPanel, SignsPanel } from "@/components/scanner/extra-menus";
+import type { DipHit, SignHit } from "@/lib/scanner/screens";
 import { rankClosingBetCandidates } from "@/lib/scanner/closing-bet";
 import { assignRelativeStrength } from "@/lib/scanner/themes";
 import { clearCreds, loadCreds, maskKey, saveCreds } from "@/lib/scanner/keys";
@@ -47,7 +52,7 @@ import type {
 } from "@/lib/scanner/types";
 import { cn, fmtPct, fmtWon } from "@/lib/utils";
 
-type NavId = "scan" | "closing" | "analysis" | "news" | "keys";
+type NavId = "scan" | "closing" | "analysis" | "news" | "keys" | "signs" | "dip";
 
 export function ScannerDesk({
   initialSihwang = null,
@@ -84,6 +89,13 @@ export function ScannerDesk({
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [analysisErr, setAnalysisErr] = useState<string | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [screenLoading, setScreenLoading] = useState(false);
+  const [screenErr, setScreenErr] = useState<string | null>(null);
+  const [screenNote, setScreenNote] = useState("");
+  const [screenSkip, setScreenSkip] = useState("");
+  const [signs, setSigns] = useState<SignHit[]>([]);
+  const [dips, setDips] = useState<DipHit[]>([]);
+  const screenOnce = useRef(false);
   const cancelRef = useRef(false);
 
   useEffect(() => {
@@ -296,6 +308,34 @@ export function ScannerDesk({
     }
   };
 
+  const runScreen = useCallback(async () => {
+    if (!creds) return;
+    setScreenLoading(true);
+    setScreenErr(null);
+    try {
+      const res = await screenUniverseFn({ data: { ...creds, todayTop: scanSize } });
+      if (!res.ok) {
+        setScreenErr(res.error);
+        return;
+      }
+      setSigns(res.signs);
+      setDips(res.dips);
+      setScreenNote(`${res.note} · 유니버스 ${res.universeSize} 중 ${res.scanned}종목 일봉 확인`);
+      setScreenSkip(res.skipped);
+      if (res.errors.length) setScreenErr(res.errors.join(" · "));
+    } catch (e) {
+      setScreenErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScreenLoading(false);
+    }
+  }, [creds, scanSize]);
+
+  useEffect(() => {
+    if ((nav !== "signs" && nav !== "dip") || !creds || screenOnce.current || screenLoading) return;
+    screenOnce.current = true;
+    void runScreen();
+  }, [nav, creds, runScreen, screenLoading]);
+
   const remainPct = useMemo(() => {
     if (!token.hasToken || !token.totalSeconds) return 0;
     return ((token.secondsRemaining ?? 0) / token.totalSeconds) * 100;
@@ -307,6 +347,8 @@ export function ScannerDesk({
     { id: "scan", label: "자동스캔", icon: LayoutDashboard },
     { id: "closing", label: "종가베팅", icon: Crosshair },
     { id: "analysis", label: "분석", icon: Search },
+    { id: "signs", label: "사전징후", icon: AlertTriangle },
+    { id: "dip", label: "저가매수", icon: TrendingDown },
     { id: "news", label: "시황·뉴스", icon: Newspaper },
     { id: "keys", label: "API 설정", icon: KeyRound },
   ];
@@ -537,7 +579,23 @@ export function ScannerDesk({
                   </Button>
                 </form>
                 {analysisErr ? <p className="text-sm text-down">{analysisErr}</p> : null}
-                {analysis ? <AnalysisView report={analysis} /> : null}
+                {analysis ? <AnalysisPanel report={analysis} /> : null}
+              </section>
+            ) : null}
+
+            {nav === "signs" || nav === "dip" ? (
+              <section className="flex flex-col gap-3">
+                <button
+                  type="button"
+                  className="self-start text-sm text-fg-muted underline"
+                  disabled={screenLoading || !creds}
+                  onClick={() => void runScreen()}
+                >
+                  {screenLoading ? "A∪B∪C에서 추출 중…" : "다시 추출"}
+                </button>
+                {screenErr ? <p className="text-sm text-down">{screenErr}</p> : null}
+                {nav === "signs" ? <SignsPanel signs={signs} note={screenNote} skipped={screenSkip} /> : null}
+                {nav === "dip" ? <DipPanel dips={dips} note={screenNote} skipped={screenSkip} /> : null}
               </section>
             ) : null}
 
@@ -651,71 +709,5 @@ export function ScannerDesk({
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function AnalysisView({ report }: { report: AnalysisReport }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          {report.stockName} <span className="font-mono text-sm text-fg-subtle">{report.stockCode}</span>
-        </CardTitle>
-        <CardDesc>
-          시황 {report.marketState} · 매수 {report.recommend == null ? "판단불가" : report.recommend ? "Yes" : "No"}
-        </CardDesc>
-      </CardHeader>
-      <p className="text-sm font-medium">현재 주가: {fmtWon(report.currentPrice)}</p>
-      <p className="mt-2 text-sm text-fg-muted">시황 요약: {report.marketReason}</p>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <IndexSpark points={report.kospiTrend} label="코스피" />
-        <IndexSpark points={report.kosdaqTrend} label="코스닥" />
-      </div>
-      <p className="mt-3 text-sm">{report.maNote}</p>
-      <p className="text-sm text-fg-muted">
-        RSI {report.rsi ?? "미산출"} · {report.macdNote} · 거래량 {report.volumeRatio != null ? `${report.volumeRatio}배` : "미확보"}
-      </p>
-      {report.supplyRows.length ? (
-        <ul className="mt-2 text-xs text-fg-muted">
-          {report.supplyRows.map((r) => (
-            <li key={r.date}>
-              {r.date || "일자미확보"} · 외인 {r.foreign ?? "—"} · 기관 {r.inst ?? "—"} · 개인 {r.individual ?? "—"}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div>
-          <p className="text-xs font-semibold">강점</p>
-          <ul className="list-disc pl-4 text-sm text-fg-muted">
-            {report.strengths.map((s) => (
-              <li key={s}>{s}</li>
-            ))}
-          </ul>
-        </div>
-        <div>
-          <p className="text-xs font-semibold">위험</p>
-          <ul className="list-disc pl-4 text-sm text-fg-muted">
-            {report.risks.map((s) => (
-              <li key={s}>{s}</li>
-            ))}
-          </ul>
-        </div>
-      </div>
-      <p className="mt-3 text-sm">
-        매수 추천: {report.recommend == null ? "판단불가" : report.recommend ? "Yes" : "No"} · 적정 주가{" "}
-        {fmtWon(report.targetLow)} ~ {fmtWon(report.targetHigh)} · {report.targetDateText}
-      </p>
-      <p className="mt-1 text-xs text-fg-subtle">{report.targetBasis}</p>
-      <p className="mt-2 font-mono text-xs text-fg-subtle">차트 스케치: {report.chartSketch}</p>
-      {report.news.length ? (
-        <ul className="mt-3 space-y-1 text-sm text-fg-muted">
-          {report.news.slice(0, 5).map((n) => (
-            <li key={n.title}>{n.title}</li>
-          ))}
-        </ul>
-      ) : null}
-      <p className="mt-3 text-[11px] text-fg-subtle">{report.disclaimer}</p>
-    </Card>
   );
 }

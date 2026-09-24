@@ -66,6 +66,55 @@ function extractHistory(result: Record<string, unknown> | null): TapeItem["histo
   return out;
 }
 
+async function naverPollIndex(code: "KOSPI" | "KOSDAQ"): Promise<{ price: number | null; changeRatePct: number | null }> {
+  try {
+    const raw = asRec(await getJson(`https://polling.finance.naver.com/api/realtime?query=SERVICE_INDEX:${code}`));
+    const result = asRec(raw?.result);
+    const areas = Array.isArray(result?.areas) ? result.areas : [];
+    const datas = areas.flatMap((a) => {
+      const rec = asRec(a);
+      return Array.isArray(rec?.datas) ? rec.datas : [];
+    });
+    const row = datas.map((d) => asRec(d)).find((d) => String(d?.cd ?? "") === code);
+    const nv = toNum(row?.nv);
+    const cr = toNum(row?.cr);
+    const price = nv != null && nv > 10000 ? nv / 100 : nv;
+    return { price, changeRatePct: cr };
+  } catch {
+    return { price: null, changeRatePct: null };
+  }
+}
+
+function median(nums: number[]): number {
+  const s = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+}
+
+function reconcileIndex(
+  symbol: string,
+  name: string,
+  quotes: { price: number | null; changeRatePct: number | null; source: string }[],
+  notes: string[],
+): TapeItem {
+  const ok = quotes.filter((q) => q.price != null && q.price > 0);
+  if (!ok.length) return { symbol, name, price: null, changeRatePct: null, source: "없음" };
+  const mid = median(ok.map((q) => q.price!));
+  const agree = ok.filter((q) => Math.abs(q.price! - mid) / mid <= 0.004);
+  const used = agree.length >= 2 ? agree : ok;
+  const price = Math.round(median(used.map((q) => q.price!)) * 100) / 100;
+  const chgs = used.map((q) => q.changeRatePct).filter((n): n is number => n != null);
+  const changeRatePct = chgs.length ? Math.round(median(chgs) * 100) / 100 : null;
+  const label = used.map((q) => q.source).join(" · ");
+  if (agree.length < 2 && ok.length >= 2) {
+    const detail = ok.map((q) => `${q.source} ${q.price}`).join(", ");
+    notes.push(`${name} 출처 불일치(${detail}). 중앙값 ${price}을 표시하고 단일 출처로 단정하지 않습니다.`);
+  } else {
+    notes.push(`${name} ${used.length}개 출처 일치(±0.4%): ${label}`);
+  }
+  return { symbol, name, price, changeRatePct, source: label };
+}
+
 async function naverIndex(code: "KOSPI" | "KOSDAQ"): Promise<TapeItem> {
   const urls = [`https://m.stock.naver.com/api/index/${code}/basic`];
   for (const url of urls) {
@@ -105,9 +154,13 @@ async function naverUsdKrw(): Promise<TapeItem> {
 
 export async function fetchSihwang(): Promise<SihwangSnapshot> {
   const notes: string[] = [];
-  const [kospi, kosdaq, usd, spx, nasdaq, nikkei, tnx] = await Promise.all([
+  const [naverKs, naverKq, pollKs, pollKq, yahooKs, yahooKq, usd, spx, nasdaq, nikkei, tnx] = await Promise.all([
     naverIndex("KOSPI"),
     naverIndex("KOSDAQ"),
+    naverPollIndex("KOSPI"),
+    naverPollIndex("KOSDAQ"),
+    yahooQuote("^KS11", "코스피"),
+    yahooQuote("^KQ11", "코스닥"),
     naverUsdKrw(),
     yahooQuote("^GSPC", "S&P 500"),
     yahooQuote("^IXIC", "NASDAQ"),
@@ -115,14 +168,33 @@ export async function fetchSihwang(): Promise<SihwangSnapshot> {
     yahooQuote("^TNX", "미 10년물"),
   ]);
 
+  const kospi = reconcileIndex(
+    "KOSPI",
+    "코스피",
+    [
+      { price: naverKs.price, changeRatePct: naverKs.changeRatePct, source: "네이버" },
+      { price: pollKs.price, changeRatePct: pollKs.changeRatePct, source: "네이버폴링" },
+      { price: yahooKs.price, changeRatePct: yahooKs.changeRatePct, source: "Yahoo" },
+    ],
+    notes,
+  );
+  kospi.history = yahooKs.history;
+  const kosdaq = reconcileIndex(
+    "KOSDAQ",
+    "코스닥",
+    [
+      { price: naverKq.price, changeRatePct: naverKq.changeRatePct, source: "네이버" },
+      { price: pollKq.price, changeRatePct: pollKq.changeRatePct, source: "네이버폴링" },
+      { price: yahooKq.price, changeRatePct: yahooKq.changeRatePct, source: "Yahoo" },
+    ],
+    notes,
+  );
+  kosdaq.history = yahooKq.history;
+
   const korean = [kospi, kosdaq, usd];
   const global = [spx, nasdaq, nikkei, tnx];
-  const [ksHist, kqHist] = await Promise.all([yahooQuote("^KS11", "코스피"), yahooQuote("^KQ11", "코스닥")]);
-  if (ksHist.history?.length) kospi.history = ksHist.history;
-  if (kqHist.history?.length) kosdaq.history = kqHist.history;
   if (korean.every((t) => t.price == null)) notes.push("국내 지수 시황을 불러오지 못했습니다.");
   if (global.every((t) => t.price == null)) notes.push("해외 지수 시황을 불러오지 못했습니다.");
-  if (!notes.length) notes.push("국내 시황은 FinanceDataReader 계열(네이버 증권 공개), 해외는 yfinance 계열(Yahoo Finance)입니다.");
 
   return {
     fetchedAt: new Date().toISOString(),

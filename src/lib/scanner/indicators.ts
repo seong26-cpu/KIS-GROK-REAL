@@ -56,6 +56,111 @@ export function computeRsi(daily: DailyBar[] | null, period = 14): number | null
   return Math.round((100 - 100 / (1 + rs)) * 10) / 10;
 }
 
+export function computeStochastic(
+  daily: DailyBar[] | null,
+  period = 14,
+  smooth = 3,
+): { k: number; d: number } | null {
+  if (!daily || daily.length < period + smooth) return null;
+  const ks: number[] = [];
+  for (let i = 0; i < period + smooth; i++) {
+    const window = daily.slice(i, i + period);
+    if (window.length < period) return null;
+    const highs: number[] = [];
+    const lows: number[] = [];
+    const close = toNum(window[0]?.stck_clpr);
+    for (const row of window) {
+      const h = toNum(row.stck_hgpr);
+      const l = toNum(row.stck_lwpr);
+      if (h != null) highs.push(h);
+      if (l != null) lows.push(l);
+    }
+    if (close == null || !highs.length || !lows.length) return null;
+    const hh = Math.max(...highs);
+    const ll = Math.min(...lows);
+    const den = hh - ll;
+    ks.push(den === 0 ? 50 : ((close - ll) / den) * 100);
+  }
+  const k = ks[0]!;
+  const d = ks.slice(0, smooth).reduce((a, b) => a + b, 0) / smooth;
+  return { k: Math.round(k * 10) / 10, d: Math.round(d * 10) / 10 };
+}
+
+export type SrLevels = {
+  support1: number | null;
+  support2: number | null;
+  resistance1: number | null;
+  resistance2: number | null;
+  superTrend: number | null;
+};
+
+export function computeSupportResistance(
+  daily: DailyBar[],
+  price: number | null,
+  ma20: number | null,
+  ma60: number | null,
+  atr: number | null,
+): SrLevels {
+  const highs: number[] = [];
+  const lows: number[] = [];
+  for (const row of daily.slice(0, 60)) {
+    const h = toNum(row.stck_hgpr) ?? toNum(row.stck_clpr);
+    const l = toNum(row.stck_lwpr) ?? toNum(row.stck_clpr);
+    if (h != null) highs.push(h);
+    if (l != null) lows.push(l);
+  }
+  const empty: SrLevels = { support1: null, support2: null, resistance1: null, resistance2: null, superTrend: null };
+  if (!highs.length || !lows.length) return empty;
+
+  const high20 = Math.max(...highs.slice(0, Math.min(20, highs.length)));
+  const low20 = Math.min(...lows.slice(0, Math.min(20, lows.length)));
+  const high60 = Math.max(...highs);
+  const low60 = Math.min(...lows);
+
+  const swingHighs: number[] = [];
+  const swingLows: number[] = [];
+  const n = Math.min(highs.length, lows.length);
+  for (let i = 2; i < n - 2; i++) {
+    const h = highs[i]!;
+    const l = lows[i]!;
+    if (h >= highs[i - 1]! && h >= highs[i - 2]! && h >= highs[i + 1]! && h >= highs[i + 2]!) swingHighs.push(h);
+    if (l <= lows[i - 1]! && l <= lows[i - 2]! && l <= lows[i + 1]! && l <= lows[i + 2]!) swingLows.push(l);
+  }
+
+  const px = price ?? highs[0]!;
+  const resAbove = swingHighs.filter((v) => v > px * 1.008).sort((a, b) => a - b);
+  const supBelow = swingLows.filter((v) => v < px * 0.992).sort((a, b) => b - a);
+
+  let resistance1 = resAbove[0] ?? (high20 > px ? high20 : null);
+  let resistance2 = resAbove[1] ?? (high60 > (resistance1 ?? px) * 1.01 ? high60 : null);
+  let support1 = supBelow[0] ?? (ma20 != null && ma20 < px ? ma20 : low20 < px ? low20 : null);
+  let support2 = supBelow[1] ?? (ma60 != null && ma60 < (support1 ?? px) ? ma60 : low60 < px ? low60 : null);
+
+  if (ma20 != null && ma20 < px && (support1 == null || Math.abs(ma20 - support1) / px > 0.015)) {
+    if (support1 == null || ma20 > support1) {
+      support2 = support1 ?? support2;
+      support1 = ma20;
+    }
+  }
+
+  let superTrend: number | null = null;
+  if (ma20 != null && atr != null) {
+    superTrend = Math.round(px >= ma20 ? ma20 - atr * 0.3 : ma20 + atr * 0.3);
+  } else if (ma20 != null) {
+    superTrend = Math.round(ma20);
+  }
+
+  const rnd = (v: number | null) => (v == null ? null : Math.round(v));
+  if (resistance1 != null && support1 != null && resistance1 <= support1) resistance1 = Math.round(high20);
+  return {
+    support1: rnd(support1),
+    support2: rnd(support2),
+    resistance1: rnd(resistance1),
+    resistance2: rnd(resistance2),
+    superTrend,
+  };
+}
+
 export function computeAtr(daily: DailyBar[] | null, period = 14): number | null {
   if (!daily || daily.length < period + 1) return null;
   const rows = daily.slice(0, period + 1);

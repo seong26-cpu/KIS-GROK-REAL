@@ -363,3 +363,51 @@ export const analyzeStockFn = createServerFn({ method: "POST" })
       return { ok: false, error: errMsg(e) };
     }
   });
+
+export const screenUniverseFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) => credsSchema.extend({ todayTop: z.number().int().min(50).max(300).optional() }).parse(d))
+  .handler(async ({ data }) => {
+    const { KisClient } = await import("@/lib/kis/client.server");
+    const { buildSnapshot } = await import("@/lib/kis/snapshot.server");
+    const { detectSigns, scoreDip } = await import("@/lib/scanner/screens");
+    const todayTop = data.todayTop ?? 50;
+    const id = `${data.appKey.trim()}:${todayTop}`;
+    let uni = universeCache.get(id)?.snap;
+    const client = new KisClient(creds(data));
+    try {
+      await client.ensureToken();
+      if (!uni) {
+        const { buildUniverse } = await import("@/lib/kis/universe.server");
+        uni = await buildUniverse(client, null, todayTop);
+        universeCache.set(id, { until: Date.now() + 5 * 60 * 1000, snap: uni });
+      }
+      const pool = uni.selected.slice(0, 16);
+      const signs = [];
+      const dips = [];
+      const errors: string[] = [];
+      for (const s of pool) {
+        try {
+          const snap = await buildSnapshot(client, s.code, s);
+          signs.push(...detectSigns(snap));
+          const dip = scoreDip(snap);
+          if (dip) dips.push(dip);
+        } catch (e) {
+          errors.push(`${s.name}: ${errMsg(e)}`);
+        }
+      }
+      dips.sort((a, b) => a.priority - b.priority || b.techHits.length - a.techHits.length);
+      return {
+        ok: true as const,
+        scanned: pool.length,
+        universeSize: uni.selected.length,
+        note: uni.notes[0] ?? "A∪B∪C 유니버스",
+        signs,
+        dips,
+        errors: errors.slice(0, 4),
+        skipped:
+          "호가 단주·감사 확률·매출/FCF/PER/목표주가는 원천 숫자가 없어 만들지 않습니다. 저가매수 고저는 52주가 아니라 확보 일봉입니다.",
+      };
+    } catch (e) {
+      return { ok: false as const, error: errMsg(e) };
+    }
+  });

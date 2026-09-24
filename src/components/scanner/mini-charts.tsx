@@ -1,4 +1,4 @@
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, ComposedChart, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 export function PriceChart({
   bars,
@@ -36,6 +36,48 @@ export function PriceChart({
           />
           <Line type="monotone" dataKey="close" stroke={stroke} strokeWidth={2} dot={false} />
         </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+export function SrChart({
+  bars,
+  support1,
+  support2,
+  resistance1,
+  resistance2,
+}: {
+  bars: { date: string; close: number; volume: number | null }[];
+  support1: number | null;
+  support2: number | null;
+  resistance1: number | null;
+  resistance2: number | null;
+}) {
+  if (bars.length < 2) return <p className="text-sm text-fg-muted">일봉이 부족해 지지·저항을 그리지 않습니다.</p>;
+  const data = bars.map((b) => ({
+    ...b,
+    label: b.date.length >= 8 ? `${b.date.slice(4, 6)}.${b.date.slice(6, 8)}` : b.date.slice(-5),
+  }));
+  return (
+    <div className="h-64 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid stroke="color-mix(in oklab, var(--color-fg) 8%, transparent)" vertical={false} />
+          <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--color-fg-subtle)" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+          <YAxis yAxisId="p" domain={["auto", "auto"]} width={56} tick={{ fontSize: 10, fill: "var(--color-fg-subtle)" }} axisLine={false} tickLine={false} tickFormatter={(v: number) => Math.round(v).toLocaleString("ko-KR")} />
+          <YAxis yAxisId="v" orientation="right" hide />
+          <Tooltip
+            contentStyle={{ background: "var(--color-bg-elevated)", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 12 }}
+            formatter={(v, key) => [Number(v).toLocaleString("ko-KR"), key === "volume" ? "거래량" : "종가"]}
+          />
+          <Bar yAxisId="v" dataKey="volume" fill="color-mix(in oklab, var(--color-fg) 18%, transparent)" />
+          <Line yAxisId="p" type="monotone" dataKey="close" stroke="var(--color-accent)" strokeWidth={2} dot={false} />
+          {support1 != null ? <ReferenceLine yAxisId="p" y={support1} stroke="var(--color-up)" strokeDasharray="4 3" label={{ value: "지지1", fontSize: 10, fill: "var(--color-up)" }} /> : null}
+          {support2 != null ? <ReferenceLine yAxisId="p" y={support2} stroke="var(--color-up)" strokeDasharray="2 4" label={{ value: "지지2", fontSize: 10, fill: "var(--color-up)" }} /> : null}
+          {resistance1 != null ? <ReferenceLine yAxisId="p" y={resistance1} stroke="var(--color-down)" strokeDasharray="4 3" label={{ value: "저항1", fontSize: 10, fill: "var(--color-down)" }} /> : null}
+          {resistance2 != null ? <ReferenceLine yAxisId="p" y={resistance2} stroke="var(--color-down)" strokeDasharray="2 4" label={{ value: "저항2", fontSize: 10, fill: "var(--color-down)" }} /> : null}
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );

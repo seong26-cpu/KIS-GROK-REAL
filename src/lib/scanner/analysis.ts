@@ -1,5 +1,5 @@
 import type { AnalysisReport, LiveSnapshot, NewsItem, SihwangSnapshot } from "./types";
-import { computeMacd, computeRsi, toNum } from "./indicators";
+import { computeAtr, computeMacd, computeRsi, computeStochastic, computeSupportResistance, toNum } from "./indicators";
 import { fetchMarketNews } from "@/lib/market/news.server";
 
 function trendFromTape(snap: SihwangSnapshot | null, symbol: string): AnalysisReport["kospiTrend"] {
@@ -63,6 +63,13 @@ export async function buildAnalysis(
   const macdNote = macd
     ? `MACD ${macd.macd} / 시그널 ${macd.signal}${macd.goldenCross ? " · 골든크로스" : macd.deadCross ? " · 데드크로스" : ""}`
     : "MACD 산출에 필요한 일봉이 부족합니다.";
+  const stoch = computeStochastic(daily);
+  const stochNote = stoch
+    ? `스토캐스틱 %K ${stoch.k} / %D ${stoch.d}${stoch.k >= 80 ? " · 단기 과매수" : stoch.k <= 20 ? " · 단기 과매도" : ""}`
+    : "스토캐스틱 산출에 일봉이 부족합니다.";
+  const atr = computeAtr(daily);
+  const sr = computeSupportResistance(daily, p, ma20, ma60, atr);
+  const stop = sr.support2 ?? (p != null ? Math.round(p * 0.92) : null);
 
   const supplyRows = env.investorRows.slice(0, 3).map((row) => ({
     date: String(row.stck_bsop_date ?? row.bsop_date ?? ""),
@@ -136,10 +143,58 @@ export async function buildAnalysis(
   if (macd) sketch.push(macd.goldenCross ? "MACD 골든" : macd.deadCross ? "MACD 데드" : "MACD 보합");
 
   const recentCloses = [...daily]
-    .slice(0, 10)
+    .slice(0, 40)
     .reverse()
-    .map((b) => ({ date: String(b.date ?? ""), close: toNum(b.stck_clpr) ?? 0 }))
+    .map((b) => ({ date: String(b.date ?? ""), close: toNum(b.stck_clpr) ?? 0, volume: toNum(b.acml_vol) }))
     .filter((x) => x.close > 0);
+
+  const won = (n: number | null) => (n == null ? "미산출" : `${Math.round(n).toLocaleString("ko-KR")}원`);
+  const name = env.stockName ?? env.stockCode;
+  const supplyNote = supplyRows.length
+    ? `최근 수급 ${supplyRows
+        .slice(0, 3)
+        .map((r) => `${r.date || "일자"} 외인 ${r.foreign ?? "—"} 기관 ${r.inst ?? "—"}`)
+        .join(" / ")}`
+    : "투자자별 수급을 확보하지 못했습니다.";
+  const newsLine = news.length
+    ? `수집 기사 ${news.length}건. 제목만 인용하며 실적·수주 숫자는 기사에 적힌 경우에만 확인하세요.`
+    : "최근 뉴스를 확보하지 못해 펀더멘털 문장은 쓰지 않습니다.";
+  const summary = [
+    `${name}(${env.stockCode}) 현재가 ${won(p)}, 당일 ${env.changeRatePct == null ? "등락 미확보" : `${env.changeRatePct >= 0 ? "+" : ""}${env.changeRatePct.toFixed(2)}%`}. 시황은 ${marketState}. ${marketReason}`,
+    `${maNote}. ${volumeRatio != null ? `거래량은 직전 3일 평균 대비 ${volumeRatio}배` : "거래량 배수는 미산출"}. ${macdNote}. RSI ${rsi ?? "미산출"}. ${stochNote}.`,
+    `${supplyNote} ${newsLine}`,
+    p == null
+      ? "현재가가 없어 매수·매도 가격을 만들지 않습니다."
+      : `지지 ${won(sr.support1)} / ${won(sr.support2)}, 저항 ${won(sr.resistance1)} / ${won(sr.resistance2)}. 추격 매수보다 지지 안착을 확인하고, 저항에서는 분할 축소를 규칙으로 둡니다.`,
+  ].join(" ");
+
+  const timing = [
+    {
+      title: "1차 매수",
+      body:
+        sr.support1 != null
+          ? `${won(sr.support1)} 부근 지지가 당일 저가·거래량으로 확인될 때 분할. 종가 기준 이 가격을 종가가 이탈하면 보류.`
+          : "지지선을 산출할 일봉이 부족해 매수 가격을 제시하지 않습니다.",
+    },
+    {
+      title: "2차 매수",
+      body: "가격만으로 비중을 늘리지 않습니다. 수집된 뉴스·공시에 수주·실적·공급계약이 실제로 있을 때만 추가. 해당 기사가 없으면 2차는 보류입니다.",
+    },
+    {
+      title: "차익 실현",
+      body:
+        sr.resistance1 != null
+          ? `1차 ${won(sr.resistance1)}${sr.resistance2 != null ? `, 2차 ${won(sr.resistance2)}` : ""}. 저항은 최근 고점·스윙 고점이며 목표가를 임의로 올리지 않습니다.`
+          : "현재가 위 저항을 일봉에서 찾지 못했습니다.",
+    },
+    {
+      title: "손절·비중 축소",
+      body:
+        stop != null
+          ? `${won(sr.support1)} 이탈 시 비중 축소, ${won(stop)} 종가 이탈 시 정리. 이 가격은 일봉 지지·저점에서 계산한 값입니다.`
+          : "손절 기준을 만들 저점이 없습니다.",
+    },
+  ];
 
   return {
     generatedAt: new Date().toISOString(),
@@ -175,5 +230,16 @@ export async function buildAnalysis(
     disclaimer:
       "실측 데이터를 규칙으로 정리한 참고 자료이며 투자 조언이 아닙니다. 뉴스의 호재·악재와 미확보 항목은 직접 확인하세요.",
     errors,
+    summary,
+    timing,
+    levels: {
+      support1: sr.support1,
+      support2: sr.support2,
+      resistance1: sr.resistance1,
+      resistance2: sr.resistance2,
+      stop,
+    },
+    chartBars: recentCloses,
+    stochNote,
   };
 }
