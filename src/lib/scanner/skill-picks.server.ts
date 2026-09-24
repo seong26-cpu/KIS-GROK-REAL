@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { resolveKisCreds } from "@/lib/secret-env.server";
-import { classifySkillQuery, SKILL_STEPS } from "@/lib/scanner/skill-picks";
+import { classifySkillQuery, SKILL_STEPS, type SkillCheapRow, type SkillPicksResult } from "@/lib/scanner/skill-picks";
 import { analyzeStockFn } from "@/lib/scanner/fns";
 
 const input = z.object({
@@ -10,18 +10,22 @@ const input = z.object({
   query: z.string().min(1).max(400),
 });
 
+export type SkillPicksFnResult = SkillPicksResult | { ok: false; error: string };
+
 export const skillPicksFn = createServerFn({ method: "POST" })
   .validator((d: unknown) => input.parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data }): Promise<SkillPicksFnResult> => {
     const q = data.query.trim();
     const mode = classifySkillQuery(q);
-    const heading = "분석 STOCK" as const;
-    const wrap = (body: string, extra: Record<string, unknown> = {}) => ({
-      ok: true as const,
-      heading,
+    const pack = (
+      body: string,
+      extra: Partial<Pick<SkillPicksResult, "cheap" | "report" | "market">> = {},
+    ): SkillPicksResult => ({
+      ok: true,
+      heading: "분석 STOCK",
       query: q,
       mode,
-      workflow: SKILL_STEPS,
+      workflow: [...SKILL_STEPS],
       body,
       ...extra,
     });
@@ -37,7 +41,7 @@ export const skillPicksFn = createServerFn({ method: "POST" })
           market.crossNote,
           "korean-stock-picks: 시황은 매크로 단계입니다. 바로 매수 추천으로 이어가지 않습니다.",
         ].join("\n");
-        return wrap(body, { market });
+        return pack(body, { market });
       }
       const { KisClient } = await import("@/lib/kis/client.server");
       const { buildSnapshot } = await import("@/lib/kis/snapshot.server");
@@ -64,14 +68,14 @@ export const skillPicksFn = createServerFn({ method: "POST" })
       }
       if (mode === "ticker" && !codes.length) {
         const one = await analyzeStockFn({ data: { appKey: data.appKey, appSecret: data.appSecret, query: q.slice(0, 40) } });
-        if (!one.ok) return { ok: false as const, error: one.error };
+        if (!one.ok) return { ok: false, error: one.error };
         const body = one.report
           ? `${one.report.stockName}(${one.report.stockCode}) ${one.report.summary}`
           : "시황 결과는 아래 패널을 보세요.";
-        return wrap(body, { report: one.report, market: one.market });
+        return pack(body, { report: one.report, market: one.market });
       }
-      const cheap = [];
-      let report = undefined;
+      const cheap: SkillCheapRow[] = [];
+      let report: SkillPicksResult["report"];
       for (const row of codes.slice(0, 5)) {
         try {
           const snap = await buildSnapshot(client, row.code);
@@ -98,8 +102,8 @@ export const skillPicksFn = createServerFn({ method: "POST" })
         mode === "cheap"
           ? "저가매수 후보는 유동성 대형 위주입니다. PER 0.x 소형·테마 급락은 제외했습니다."
           : `질의: ${q}`;
-      return wrap(`${intro}\n아래는 스킬 워크플로로 붙인 실시간 시세·컨센서스 요약입니다.`, { cheap, report });
+      return pack(`${intro}\n아래는 스킬 워크플로로 붙인 실시간 시세·컨센서스 요약입니다.`, { cheap, report });
     } catch (e) {
-      return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   });
