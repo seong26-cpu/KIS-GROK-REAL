@@ -40,7 +40,7 @@ import {
 } from "@/lib/scanner/fns";
 import { AnalysisPanel, DipPanel, MarketPanel, SignsPanel } from "@/components/scanner/extra-menus";
 import { SkillPicksPanel } from "@/components/scanner/skill-picks-panel";
-import { skillPicksFn } from "@/lib/scanner/skill-picks.server";
+import { skillPicksFn } from "@/lib/scanner/skill-picks-fn";
 import type { DipHit, SignHit } from "@/lib/scanner/screens";
 import type { DartEventHit } from "@/lib/dart/events";
 import type { MarketBrief } from "@/lib/scanner/types";
