@@ -339,16 +339,28 @@ const analysisInput = credsSchema.extend({
   query: z.string().min(1).max(40),
 });
 
-export type AnalysisResult = { ok: true; report: AnalysisReport } | { ok: false; error: string };
+export type AnalysisResult =
+  | { ok: true; report: AnalysisReport; market?: undefined }
+  | { ok: true; market: import("./types").MarketBrief; report?: undefined }
+  | { ok: false; error: string };
 
 export const analyzeStockFn = createServerFn({ method: "POST" })
   .validator((d: unknown) => analysisInput.parse(d))
   .handler(async ({ data }): Promise<AnalysisResult> => {
+    const q = data.query.trim();
+    const { marketQuery, buildMarketBrief } = await import("@/lib/market/brief.server");
+    const market = marketQuery(q);
+    if (market) {
+      try {
+        return { ok: true, market: await buildMarketBrief(market) };
+      } catch (e) {
+        return { ok: false, error: errMsg(e) };
+      }
+    }
     const { KisClient } = await import("@/lib/kis/client.server");
     const { buildSnapshot } = await import("@/lib/kis/snapshot.server");
     const { buildAnalysis } = await import("@/lib/scanner/analysis");
     const client = new KisClient(creds(data));
-    const q = data.query.trim();
     let code = /^\d{1,6}$/.test(q) ? q.padStart(6, "0") : "";
     if (!code) {
       const prefix = creds(data).appKey.trim();

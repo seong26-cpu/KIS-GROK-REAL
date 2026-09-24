@@ -270,6 +270,29 @@ export type AnalysisReport = {
   };
   chartBars?: { date: string; close: number; volume: number | null }[];
   stochNote?: string;
+  consensus?: {
+    date: string;
+    score: string;
+    target: string;
+    upsidePct: number | null;
+  } | null;
+  researches?: { broker: string; title: string; date: string }[];
+};
+
+export type MarketBrief = {
+  market: "KOSPI" | "KOSDAQ";
+  asOf: string;
+  price: number | null;
+  changePct: number | null;
+  crossNote: string;
+  stats: { label: string; value: string }[];
+  flow: { label: string; value: string }[];
+  breadth: { label: string; value: string }[];
+  sectors: { name: string; names: string[] }[];
+  leaders: { code: string; name: string; price: string; change: string }[];
+  news: { title: string; source: string; date: string }[];
+  outlook: string;
+  disclaimer: string;
 };
 
 export const MIN_PRICE = 1000;

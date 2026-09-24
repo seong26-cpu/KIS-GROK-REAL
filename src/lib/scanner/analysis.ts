@@ -151,6 +151,11 @@ export async function buildAnalysis(
   const won = (n: number | null) => (n == null ? "미산출" : `${Math.round(n).toLocaleString("ko-KR")}원`);
   const { fetchDartFacts } = await import("@/lib/dart/client.server");
   const dart = await fetchDartFacts(env.stockCode, p);
+  const { fetchNaverConsensus } = await import("@/lib/market/brief.server");
+  const naver = await fetchNaverConsensus(env.stockCode, p).catch(() => ({
+    consensus: null,
+    researches: [] as { broker: string; title: string; date: string }[],
+  }));
   if (dart?.titles.length) {
     news.unshift(...dart.titles.filter((t) => !news.some((n) => n.title === t.title)).slice(0, 6));
   }
@@ -169,6 +174,9 @@ export async function buildAnalysis(
     `${maNote}. ${volumeRatio != null ? `거래량은 직전 3일 평균 대비 ${volumeRatio}배` : "거래량 배수는 미산출"}. ${macdNote}. RSI ${rsi ?? "미산출"}. ${stochNote}.`,
     `${supplyNote} ${newsLine}`,
     dart?.lines.length ? `DART ${dart.lines.join(" / ")}` : "DART 재무 숫자를 붙이지 못했습니다.",
+    naver.consensus
+      ? `네이버 컨센서스 ${naver.consensus.date} 목표 ${naver.consensus.target}원, 추천평균 ${naver.consensus.score} (5 적극매수~1 적극매도). 현재가 대비 ${naver.consensus.upsidePct == null ? "괴리 계산 불가" : `${naver.consensus.upsidePct}%`}.`
+      : "네이버 목표주가를 받지 못했습니다.",
     p == null
       ? "현재가가 없어 매수·매도 가격을 만들지 않습니다."
       : `지지 ${won(sr.support1)} / ${won(sr.support2)}, 저항 ${won(sr.resistance1)} / ${won(sr.resistance2)}. 추격 매수보다 지지 안착을 확인하고, 저항에서는 분할 축소를 규칙으로 둡니다.`,
@@ -247,5 +255,7 @@ export async function buildAnalysis(
     },
     chartBars: recentCloses,
     stochNote,
+    consensus: naver.consensus,
+    researches: naver.researches,
   };
 }

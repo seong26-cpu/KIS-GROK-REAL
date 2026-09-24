@@ -1,6 +1,6 @@
 import { SrChart } from "@/components/scanner/mini-charts";
 import { Card, CardDesc, CardHeader, CardTitle } from "@/components/ui/card";
-import type { AnalysisReport } from "@/lib/scanner/types";
+import type { AnalysisReport, MarketBrief } from "@/lib/scanner/types";
 import type { DipHit, SignHit } from "@/lib/scanner/screens";
 import type { DartEventHit } from "@/lib/dart/events";
 import { fmtWon } from "@/lib/utils";
@@ -46,6 +46,23 @@ export function AnalysisPanel({ report }: { report: AnalysisReport }) {
       <p className="mt-3 text-sm text-fg-muted">
         {report.maNote} · RSI {report.rsi ?? "미산출"} · {report.macdNote} · {report.stochNote}
       </p>
+      {report.consensus ? (
+        <p className="mt-2 text-sm">
+          네이버 컨센서스 {report.consensus.date} · 목표 {report.consensus.target}원 · 추천평균 {report.consensus.score}{" "}
+          (5 적극매수~1 적극매도) · 현재가 대비 {report.consensus.upsidePct == null ? "—" : `${report.consensus.upsidePct}%`}
+        </p>
+      ) : (
+        <p className="mt-2 text-xs text-fg-subtle">네이버 목표주가·추천평균을 받지 못했습니다.</p>
+      )}
+      {report.researches?.length ? (
+        <ul className="mt-2 text-sm text-fg-muted">
+          {report.researches.map((r) => (
+            <li key={`${r.broker}-${r.title}`}>
+              {r.date} {r.broker} · {r.title}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {report.news.length ? (
         <ul className="mt-3 space-y-1 text-sm text-fg-muted">
           {report.news.slice(0, 6).map((n) => (
@@ -57,6 +74,84 @@ export function AnalysisPanel({ report }: { report: AnalysisReport }) {
       )}
       <p className="mt-3 text-[11px] text-fg-subtle">{report.disclaimer}</p>
     </Card>
+  );
+}
+
+export function MarketPanel({ brief }: { brief: MarketBrief }) {
+  return (
+    <section className="flex flex-col gap-3">
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            {brief.market} 시황
+          </CardTitle>
+          <CardDesc>
+            {brief.price == null ? "교차확인 지수 없음" : brief.price.toLocaleString("ko-KR")}{" "}
+            {brief.changePct == null ? "" : `${brief.changePct >= 0 ? "+" : ""}${brief.changePct.toFixed(2)}%`}
+          </CardDesc>
+        </CardHeader>
+        <p className="text-sm leading-relaxed">{brief.outlook}</p>
+        <p className="mt-2 text-xs text-fg-subtle">{brief.crossNote}</p>
+      </Card>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card>
+          <p className="mb-2 text-sm font-semibold">시세</p>
+          <ul className="space-y-1 text-sm text-fg-muted">
+            {brief.stats.map((s) => (
+              <li key={s.label}>
+                {s.label} {s.value}
+              </li>
+            ))}
+          </ul>
+        </Card>
+        <Card>
+          <p className="mb-2 text-sm font-semibold">수급</p>
+          <ul className="space-y-1 text-sm text-fg-muted">
+            {brief.flow.map((s) => (
+              <li key={s.label}>
+                {s.label} {s.value}
+              </li>
+            ))}
+          </ul>
+        </Card>
+        <Card>
+          <p className="mb-2 text-sm font-semibold">등락 종목 수</p>
+          <ul className="space-y-1 text-sm text-fg-muted">
+            {brief.breadth.map((s) => (
+              <li key={s.label}>
+                {s.label} {s.value}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      </div>
+      <Card>
+        <p className="mb-2 text-sm font-semibold">시가총액 상위 (매수 추천 아님)</p>
+        <ul className="space-y-1 text-sm">
+          {brief.leaders.map((s) => (
+            <li key={s.code}>
+              {s.name} <span className="font-mono text-fg-subtle">{s.code}</span> {s.price} · {s.change}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-2 text-xs text-fg-subtle">
+          이름 기준 묶음: {brief.sectors.map((s) => `${s.name} ${s.names.join(", ")}`).join(" / ") || "분류 없음"}
+        </p>
+      </Card>
+      {brief.news.length ? (
+        <Card>
+          <p className="mb-2 text-sm font-semibold">시황 뉴스</p>
+          <ul className="space-y-1 text-sm text-fg-muted">
+            {brief.news.map((n) => (
+              <li key={n.title}>
+                {n.title} <span className="text-fg-subtle">· {n.source}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+      <p className="text-[11px] text-fg-subtle">{brief.disclaimer}</p>
+    </section>
   );
 }
 

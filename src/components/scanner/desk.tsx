@@ -37,9 +37,10 @@ import {
   serverKeyStatusFn,
   fetchDartEventsFn,
 } from "@/lib/scanner/fns";
-import { AnalysisPanel, DipPanel, SignsPanel } from "@/components/scanner/extra-menus";
+import { AnalysisPanel, DipPanel, MarketPanel, SignsPanel } from "@/components/scanner/extra-menus";
 import type { DipHit, SignHit } from "@/lib/scanner/screens";
 import type { DartEventHit } from "@/lib/dart/events";
+import type { MarketBrief } from "@/lib/scanner/types";
 import { rankClosingBetCandidates } from "@/lib/scanner/closing-bet";
 import { assignRelativeStrength } from "@/lib/scanner/themes";
 import { clearCreds, loadCreds, maskKey, saveCreds } from "@/lib/scanner/keys";
@@ -93,6 +94,7 @@ export function ScannerDesk({
   const [scanSize, setScanSize] = useState<50 | 100 | 300>(50);
   const [analysisQ, setAnalysisQ] = useState("");
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
+  const [marketBrief, setMarketBrief] = useState<MarketBrief | null>(null);
   const [analysisErr, setAnalysisErr] = useState<string | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [screenLoading, setScreenLoading] = useState(false);
@@ -329,10 +331,17 @@ export function ScannerDesk({
       const res = await analyzeStockFn({ data: { ...creds, query: analysisQ.trim() } });
       if (!res.ok) {
         setAnalysis(null);
+        setMarketBrief(null);
         setAnalysisErr(res.error);
         return;
       }
-      setAnalysis(res.report);
+      if (res.market) {
+        setMarketBrief(res.market);
+        setAnalysis(null);
+        return;
+      }
+      setMarketBrief(null);
+      setAnalysis(res.report ?? null);
     } catch (e) {
       setAnalysisErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -643,8 +652,11 @@ export function ScannerDesk({
 
             {nav === "analysis" ? (
               <section className="flex flex-col gap-4">
-                <h2 className="text-lg font-semibold">개별 종목 분석</h2>
-                <p className="text-sm text-fg-muted">종목코드(6자리) 또는 종목명으로 조회합니다. KIS 실전 시세 + 공개 뉴스를 사용합니다.</p>
+                <h2 className="text-lg font-semibold">분석</h2>
+                <p className="text-sm text-fg-muted">
+                  종목코드·종목명 또는 KOSPI / KOSDAQ. 시장을 입력하면 그날 지수, 수급, 등락 종목 수, 시총 상위를 보여 줍니다.
+                  목표주가는 네이버에 있을 때만 적습니다.
+                </p>
                 <form
                   className="flex flex-col gap-2 sm:flex-row"
                   onSubmit={(e) => {
@@ -655,7 +667,7 @@ export function ScannerDesk({
                   <Input
                     value={analysisQ}
                     onChange={(e) => setAnalysisQ(e.target.value)}
-                    placeholder="005930 또는 삼성전자"
+                    placeholder="005930, 삼성전자, KOSPI"
                     className="sm:max-w-xs"
                   />
                   <Button type="submit" disabled={analysisLoading || !creds}>
@@ -663,6 +675,7 @@ export function ScannerDesk({
                   </Button>
                 </form>
                 {analysisErr ? <p className="text-sm text-down">{analysisErr}</p> : null}
+                {marketBrief ? <MarketPanel brief={marketBrief} /> : null}
                 {analysis ? <AnalysisPanel report={analysis} /> : null}
               </section>
             ) : null}
