@@ -25,7 +25,6 @@ import { Progress } from "@/components/ui/progress";
 import { ThemeBoard, StockDetail } from "@/components/scanner/theme-board";
 import { IndexSpark } from "@/components/scanner/mini-charts";
 import {
-  analyzeStockFn,
   connectKis,
   evaluateBatch,
   fetchMarketNewsFn,
@@ -39,7 +38,10 @@ import {
   minuteCheckFn,
   stockBoardFn,
 } from "@/lib/scanner/fns";
-import { AnalysisPanel, DipPanel, MarketPanel, SignsPanel } from "@/components/scanner/extra-menus";
+import { DipPanel, SignsPanel } from "@/components/scanner/extra-menus";
+import { SkillPicksPanel } from "@/components/scanner/skill-picks-panel";
+import { skillPicksFn } from "@/lib/scanner/skill-picks-fn";
+import type { SkillPicksResult } from "@/lib/scanner/skill-picks";
 import type { DipHit, DipSetup, SignHit } from "@/lib/scanner/screens";
 import type { DartEventHit } from "@/lib/dart/events";
 import type { MarketBrief } from "@/lib/scanner/types";
@@ -99,6 +101,8 @@ export function ScannerDesk({
   const [marketBrief, setMarketBrief] = useState<MarketBrief | null>(null);
   const [analysisErr, setAnalysisErr] = useState<string | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [skillResult, setSkillResult] = useState<SkillPicksResult | null>(null);
+  const [skillErr, setSkillErr] = useState<string | null>(null);
   const [screenLoading, setScreenLoading] = useState(false);
   const [screenErr, setScreenErr] = useState<string | null>(null);
   const [screenNote, setScreenNote] = useState("");
@@ -341,29 +345,26 @@ export function ScannerDesk({
     }
   };
 
-  const runAnalysis = async () => {
-    if (!creds || !analysisQ.trim()) return;
+  const runSkill = async (query: string) => {
+    if (!creds || !query.trim()) return;
     setAnalysisLoading(true);
-    setAnalysisErr(null);
+    setSkillErr(null);
+    setAnalysis(null);
+    setMarketBrief(null);
     try {
-      const res = await analyzeStockFn({
-        data: { ...creds, query: analysisQ.trim(), asOf: asOfDate || undefined, time: asOfTime || undefined },
+      const res = await skillPicksFn({
+        data: { ...creds, query: query.trim(), asOf: asOfDate || undefined },
       });
       if (!res.ok) {
-        setAnalysis(null);
-        setMarketBrief(null);
-        setAnalysisErr(res.error);
+        setSkillResult(null);
+        setSkillErr(res.error);
         return;
       }
-      if (res.market) {
-        setMarketBrief(res.market);
-        setAnalysis(null);
-        return;
-      }
-      setMarketBrief(null);
+      setSkillResult(res);
       setAnalysis(res.report ?? null);
+      setMarketBrief(res.market ?? null);
     } catch (e) {
-      setAnalysisErr(e instanceof Error ? e.message : String(e));
+      setSkillErr(e instanceof Error ? e.message : String(e));
     } finally {
       setAnalysisLoading(false);
     }
@@ -429,7 +430,7 @@ export function ScannerDesk({
         setScreenDone(Math.min(pool.length, i + chunk.length));
         setSigns([...allSigns]);
         setDips([...allDips].sort((a, b) => a.priority - b.priority));
-        setSetups([...allSetups]);
+        setSetups([...allSetups].sort((a, b) => b.score - a.score));
       }
       const breakdown = [...tally.entries()].map(([k, n]) => `${k} ${n}`).join(" · ");
       setScreenNote(
@@ -855,33 +856,14 @@ export function ScannerDesk({
             ) : null}
 
             {nav === "analysis" ? (
-              <section className="flex flex-col gap-4">
-                <h2 className="text-lg font-semibold">분석 STOCK</h2>
-                <p className="text-sm text-fg-muted">
-                  종목코드·종목명 또는 KOSPI / KOSDAQ. 시장을 입력하면 그날 지수, 수급, 등락 종목 수, 시총 상위를 보여 줍니다.
-                  목표주가는 네이버에 있을 때만 적습니다.
-                </p>
-                <form
-                  className="flex flex-col gap-2 sm:flex-row"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void runAnalysis();
-                  }}
-                >
-                  <Input
-                    value={analysisQ}
-                    onChange={(e) => setAnalysisQ(e.target.value)}
-                    placeholder="005930, 삼성전자, KOSPI"
-                    className="sm:max-w-xs"
-                  />
-                  <Button type="submit" disabled={analysisLoading || !creds}>
-                    {analysisLoading ? "분석 중…" : "분석"}
-                  </Button>
-                </form>
-                {analysisErr ? <p className="text-sm text-down">{analysisErr}</p> : null}
-                {marketBrief ? <MarketPanel brief={marketBrief} onPick={openStock} /> : null}
-                {analysis ? <AnalysisPanel report={analysis} onPick={openStock} /> : null}
-              </section>
+              <SkillPicksPanel
+                creds={creds}
+                loading={analysisLoading}
+                error={skillErr ?? analysisErr}
+                onRun={runSkill}
+                result={skillResult}
+                onPick={openStock}
+              />
             ) : null}
 
             {nav === "signs" || nav === "dip" ? (

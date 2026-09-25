@@ -259,63 +259,57 @@ export function DipPanel({
     <section className="flex flex-col gap-3">
       <h2 className="text-lg font-semibold">저가매수</h2>
       <p className="text-sm text-fg-muted">
-        공시 제목만으로는 기업설명회가 대부분입니다. 아래는 같은 유니버스의 일봉·투자자 수급으로 고른 조건입니다. 기관 순매수, 몸통 3% 이상·윗꼬리가 몸통 절반 이하·거래량 1.5배인
-        양봉, 외인·기관 동반 순매수, 5일선 회복, 20일 고점 대비 -15% 이하에서 거래량 2배 양봉. 숫자가 없으면 그 조건은 빼며 목표가는 만들지 않습니다. 종목을 누르면 차트·수급
-        팝업이 열립니다. {note}
+        조건이 하나만 맞은 종목은 빼 둡니다. 수급(기관 또는 외인·기관 동반)과 가격(양봉·5일선 회복·낙폭 반등)이 함께 있거나, 가격 조건이 2개
+        이상 겹칠 때만 나옵니다. 고점 근처 양봉·순매수는 저가매수로 보지 않습니다. 겹친 개수는 적중 확률이 아니며, 맞는 사실이 더 많은
+        종목만 남긴 것입니다. {note}
       </p>
       <p className="text-xs text-fg-subtle">{skipped}</p>
-      {(
-        [
-          ["기관수급", "기관 수급"],
-          ["양봉", "의미있는 양봉"],
-          ["동반매수", "외인·기관 동반"],
-          ["이평회복", "5일선 회복"],
-          ["낙폭반등", "낙폭 후 반등"],
-        ] as const
-      ).map(([kind, title]) => {
-        const rows = setups.filter((s) => s.kind === kind).slice(0, 20);
-        return (
-          <div key={kind} className="overflow-x-auto rounded-lg border border-border">
-            <p className="border-b border-border px-3 py-2 text-sm font-semibold">
-              {title}
-              <span className="ml-2 font-normal text-fg-subtle">{rows.length}종목</span>
-            </p>
-            {rows.length ? (
-              <table className="w-full min-w-[640px] text-left text-sm">
-                <thead className="text-xs text-fg-subtle">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">종목</th>
-                    <th className="px-3 py-2 font-medium">조건</th>
-                    <th className="px-3 py-2 font-medium">근거</th>
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <p className="border-b border-border px-3 py-2 text-sm font-semibold">
+          겹친 조건
+          <span className="ml-2 font-normal text-fg-subtle">
+            {setups.length}종목 · 많은 순
+          </span>
+        </p>
+        {setups.length ? (
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="text-xs text-fg-subtle">
+              <tr>
+                <th className="px-3 py-2 font-medium">종목</th>
+                <th className="px-3 py-2 font-medium">겹침</th>
+                <th className="px-3 py-2 font-medium">근거</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...setups]
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 15)
+                .map((s) => (
+                  <tr key={`${s.code}-${s.title}`} className="border-t border-border align-top">
+                    <td className="px-3 py-2">
+                      <button type="button" className="text-left hover:underline" onClick={() => onPick?.(s.code, s.name)}>
+                        {s.name}
+                        <div className="font-mono text-xs text-fg-subtle">{s.code}</div>
+                      </button>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{s.score}개</div>
+                      <div className="text-xs text-fg-subtle">{s.hits.join(" · ")}</div>
+                    </td>
+                    <td className="px-3 py-2 text-fg-muted">
+                      {s.detail}
+                      {s.verifyNote ? <p className="mt-1 text-xs text-fg">{s.verifyNote}</p> : null}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {rows.map((s) => (
-                    <tr key={`${s.kind}-${s.code}-${s.title}`} className="border-t border-border align-top">
-                      <td className="px-3 py-2">
-                        <button type="button" className="text-left hover:underline" onClick={() => onPick?.(s.code, s.name)}>
-                          {s.name}
-                          <div className="font-mono text-xs text-fg-subtle">{s.code}</div>
-                        </button>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="font-medium">{s.title}</div>
-                        <div className="text-xs text-fg-subtle">{s.theme}</div>
-                      </td>
-                      <td className="px-3 py-2 text-fg-muted">
-                        {s.detail}
-                        {s.verifyNote ? <p className="mt-1 text-xs text-fg">{s.verifyNote}</p> : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="px-3 py-3 text-sm text-fg-subtle">이번 스캔에서 해당 없음. 수급은 기준일을 비웠을 때만 조회합니다.</p>
-            )}
-          </div>
-        );
-      })}
+                ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="px-3 py-3 text-sm text-fg-subtle">
+            조건이 겹친 종목이 없습니다. 하나만 맞은 종목은 확률을 높이기 위해 목록에서 뺐습니다.
+          </p>
+        )}
+      </div>
       <h3 className="mt-2 text-sm font-semibold">DART 공시</h3>
       {!events.length ? (
         <Card>

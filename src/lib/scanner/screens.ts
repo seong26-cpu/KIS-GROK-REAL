@@ -251,7 +251,7 @@ export function classifyDip(env: LiveSnapshot): { hit: DipHit | null; reason: st
   return { hit, reason: "통과" };
 }
 
-export type DipSetupKind = "기관수급" | "양봉" | "동반매수" | "이평회복" | "낙폭반등";
+export type DipSetupKind = "기관수급" | "양봉" | "동반매수" | "이평회복" | "낙폭반등" | "겹침";
 
 export type DipSetup = {
   code: string;
@@ -261,6 +261,8 @@ export type DipSetup = {
   title: string;
   detail: string;
   price: number | null;
+  score: number;
+  hits: string[];
   verifyNote?: string;
 };
 
@@ -271,7 +273,6 @@ function mean(nums: number[]): number | null {
 
 /** 일봉·투자자 수급에 숫자가 있을 때만. 없는 값은 조건에서 빼며 확률은 만들지 않는다. */
 export function detectDipSetups(env: LiveSnapshot): DipSetup[] {
-  const out: DipSetup[] = [];
   const name = env.stockName ?? env.stockCode;
   const theme = classifyTheme({ name, newsTitles: (env.newsItems ?? []).map((n) => n.title) });
   const daily = env.dailyPrices;
@@ -293,11 +294,13 @@ export function detectDipSetups(env: LiveSnapshot): DipSetup[] {
   const high20 = highs.length ? Math.max(...highs) : env.high20d;
   const drawdown = c != null && high20 && high20 > 0 ? ((c - high20) / high20) * 100 : null;
 
+  const flags: { kind: DipSetupKind; title: string; detail: string }[] = [];
   const push = (kind: DipSetupKind, title: string, detail: string) => {
-    out.push({ code: env.stockCode, name, theme: theme.name, kind, title, detail, price: c });
+    flags.push({ kind, title, detail });
   };
+  const offHigh = drawdown != null && drawdown <= -8;
 
-  if (o != null && h != null && c != null && c > o && v != null && volMul != null) {
+  if (offHigh && o != null && h != null && c != null && c > o && v != null && volMul != null) {
     const body = c - o;
     const bodyPct = (body / o) * 100;
     const upper = h - c;
@@ -305,30 +308,29 @@ export function detectDipSetups(env: LiveSnapshot): DipSetup[] {
       push(
         "양봉",
         bodyPct >= 5 ? "장대양봉" : "의미있는 양봉",
-        `몸통 +${bodyPct.toFixed(1)}%(시가 ${Math.round(o).toLocaleString("ko-KR")} → 종가 ${Math.round(c).toLocaleString("ko-KR")}), 윗꼬리 ${Math.round(upper).toLocaleString("ko-KR")}원, 거래량 ${volMul.toFixed(1)}배(직전 20일).`,
+        `고점 대비 ${drawdown!.toFixed(1)}%, 몸통 +${bodyPct.toFixed(1)}%, 거래량 ${volMul.toFixed(1)}배.`,
       );
     }
   }
 
   if (c != null && o != null && c > o && volMul != null && volMul >= 2 && drawdown != null && drawdown <= -15) {
-    push(
-      "낙폭반등",
-      "낙폭 과대 후 거래량 반등",
-      `20일 고가 대비 ${drawdown.toFixed(1)}%, 당일 양봉, 거래량 ${volMul.toFixed(1)}배.`,
-    );
+    push("낙폭반등", "낙폭 과대 후 거래량 반등", `20일 고가 대비 ${drawdown.toFixed(1)}%, 거래량 ${volMul.toFixed(1)}배.`);
   }
 
   const closes = daily.map((b) => toNum(b.stck_clpr)).filter((n): n is number => n != null && n > 0);
-  if (closes.length >= 6) {
+  const ma20 = closes.length >= 20 ? mean(closes.slice(0, 20)) : null;
+  if (closes.length >= 6 && (offHigh || (ma20 != null && c != null && c < ma20))) {
     const ma5 = mean(closes.slice(0, 5));
     const ma5Prev = mean(closes.slice(1, 6));
     const today = closes[0]!;
     const yday = closes[1]!;
-    if (ma5 != null && ma5Prev != null && yday < ma5Prev && today > ma5) {
+    if (ma5 != null && ma5Prev != null && yday < ma5Prev && today > ma5 && o != null && today > o) {
       push(
         "이평회복",
         "5일선 회복",
-        `전일 종가 ${Math.round(yday).toLocaleString("ko-KR")} < 5일선 ${Math.round(ma5Prev).toLocaleString("ko-KR")}, 당일 종가 ${Math.round(today).toLocaleString("ko-KR")} > 5일선 ${Math.round(ma5).toLocaleString("ko-KR")}.`,
+        `전일 ${Math.round(yday).toLocaleString("ko-KR")} < 5일선, 당일 ${Math.round(today).toLocaleString("ko-KR")} > 5일선${
+          drawdown == null ? "" : `, 고점 대비 ${drawdown.toFixed(1)}%`
+        }.`,
       );
     }
   }
@@ -339,23 +341,38 @@ export function detectDipSetups(env: LiveSnapshot): DipSetup[] {
     .filter((n): n is number => n != null);
   const foreign = toNum(env.investorRows[0]?.frgn_ntby_qty);
   const instToday = inst[0];
-  if (instToday != null && instToday > 0 && inst.reduce((a, b) => a + b, 0) > 0) {
+  if (instToday != null && instToday > 0 && inst.reduce((a, b) => a + b, 0) > 0 && drawdown != null && drawdown <= -5) {
     const sum = inst.reduce((a, b) => a + b, 0);
-    const where =
-      drawdown == null ? "고점 대비는 일봉이 부족해 계산하지 않았습니다." : `20일 고가 대비 ${drawdown.toFixed(1)}%.`;
     push(
       "기관수급",
-      drawdown != null && drawdown <= -8 ? "조정 구간 기관 순매수" : "기관 순매수",
-      `당일 기관 ${Math.round(instToday).toLocaleString("ko-KR")}주, 최근 ${inst.length}일 합 ${Math.round(sum).toLocaleString("ko-KR")}주. ${where}`,
+      "조정 구간 기관 순매수",
+      `당일 기관 ${Math.round(instToday).toLocaleString("ko-KR")}주, 최근 ${inst.length}일 합 ${Math.round(sum).toLocaleString("ko-KR")}주, 고점 대비 ${drawdown.toFixed(1)}%.`,
     );
   }
-  if (foreign != null && foreign > 0 && instToday != null && instToday > 0) {
+  if (foreign != null && foreign > 0 && instToday != null && instToday > 0 && drawdown != null && drawdown <= -5) {
     push(
       "동반매수",
       "외인·기관 동반 순매수",
-      `당일 외국인 ${Math.round(foreign).toLocaleString("ko-KR")}주, 기관 ${Math.round(instToday).toLocaleString("ko-KR")}주.`,
+      `외국인 ${Math.round(foreign).toLocaleString("ko-KR")}주, 기관 ${Math.round(instToday).toLocaleString("ko-KR")}주, 고점 대비 ${drawdown.toFixed(1)}%.`,
     );
   }
 
-  return out;
+  const priceN = flags.filter((f) => f.kind === "양봉" || f.kind === "이평회복" || f.kind === "낙폭반등").length;
+  const flowN = flags.filter((f) => f.kind === "기관수급" || f.kind === "동반매수").length;
+  const score = flags.length;
+  const pass = flowN > 0 ? priceN >= 1 && score >= 2 : priceN >= 2;
+  if (!pass) return [];
+  return [
+    {
+      code: env.stockCode,
+      name,
+      theme: theme.name,
+      kind: "겹침",
+      title: `조건 ${score}개 겹침`,
+      detail: flags.map((f) => `${f.title} — ${f.detail}`).join(" "),
+      price: c,
+      score,
+      hits: flags.map((f) => f.title),
+    },
+  ];
 }
