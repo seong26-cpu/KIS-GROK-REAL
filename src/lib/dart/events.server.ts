@@ -42,9 +42,9 @@ export async function scanDartEvents(): Promise<{ events: DartEventHit[]; scanne
   const begin = ymd(-21);
   const end = ymd(0);
   const plan: { ty: string; maxPages: number }[] = [
-    { ty: "B", maxPages: 8 },
-    { ty: "I", maxPages: 6 },
-    { ty: "E", maxPages: 2 },
+    { ty: "B", maxPages: 12 },
+    { ty: "I", maxPages: 8 },
+    { ty: "E", maxPages: 3 },
   ];
   const events: DartEventHit[] = [];
   const seen = new Set<string>();

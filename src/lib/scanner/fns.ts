@@ -354,6 +354,48 @@ function snapshotToBoard(
   };
 }
 
+export const stockBoardFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) =>
+    credsSchema
+      .extend({
+        code: z.string().min(6).max(6),
+        asOf: z.string().optional(),
+        time: z.string().optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }): Promise<{ ok: true; stock: BoardStock } | { ok: false; error: string }> => {
+    const { KisClient } = await import("@/lib/kis/client.server");
+    const { buildSnapshot } = await import("@/lib/kis/snapshot.server");
+    const client = new KisClient(creds(data));
+    try {
+      await client.ensureToken();
+      let indices: { code: string; name: string; price: number | null; changeRatePct: number | null }[] = [];
+      try {
+        const { fetchSihwang } = await import("@/lib/market/sihwang.server");
+        indices = tapeToIndices(await fetchSihwang());
+      } catch {
+        indices = [];
+      }
+      const snap = await buildSnapshot(client, data.code, undefined, data.asOf);
+      const { applyAsOf } = await import("@/lib/scanner/asof");
+      const asof = applyAsOf(snap, data.asOf);
+      if (snap.currentPrice == null) return { ok: false, error: `${data.code} 현재가를 받지 못했습니다.` };
+      const evaluated: CaseVerdict[] = [];
+      for (const cid of CASE_PRIORITY_ORDER) evaluated.push(evaluateCase(cid, snap, indices));
+      const closingRow = evaluateClosingBetCandidate(snap, {
+        isTradingValueTop: false,
+        isChangeRateTop: false,
+        indices,
+      });
+      const row = snapshotToBoard(snap, evaluated, closingRow, 0);
+      if (asof.text) row.verifyNote = asof.text;
+      return { ok: true, stock: row };
+    } catch (e) {
+      return { ok: false, error: errMsg(e) };
+    }
+  });
+
 const analysisInput = credsSchema.extend({
   query: z.string().min(1).max(40),
   asOf: z.string().optional(),
@@ -518,13 +560,14 @@ export const screenChunkFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { KisClient } = await import("@/lib/kis/client.server");
     const { toNum } = await import("@/lib/scanner/indicators");
-    const { detectSigns, classifyDip } = await import("@/lib/scanner/screens");
+    const { detectSigns, classifyDip, detectDipSetups } = await import("@/lib/scanner/screens");
     const { fetchStockNews } = await import("@/lib/market/news.server");
     const client = new KisClient(creds(data));
     try {
       await client.ensureToken();
       const signs = [];
       const dips = [];
+      const setups = [];
       const reasons: string[] = [];
       const errors: string[] = [];
       for (const item of data.items) {
@@ -532,6 +575,14 @@ export const screenChunkFn = createServerFn({ method: "POST" })
           const daily = await client.getDailyPrices(item.code, 100);
           const bar = daily[0];
           const price = item.price ?? toNum(bar?.stck_clpr);
+          let investorRows: Awaited<ReturnType<typeof client.getInvestorTrend>> = [];
+          if (!data.asOf) {
+            try {
+              investorRows = await client.getInvestorTrend(item.code);
+            } catch {
+              investorRows = [];
+            }
+          }
           const { fetchDartFacts } = await import("@/lib/dart/client.server");
           const dart = await fetchDartFacts(item.code, price);
           let news = null;
@@ -571,9 +622,9 @@ export const screenChunkFn = createServerFn({ method: "POST" })
             low20d: null,
             high60d: null,
             low60d: null,
-            foreignNetBuy1d: null,
-            foreignNetBuy2d: null,
-            instNetBuy1d: null,
+            foreignNetBuy1d: toNum(investorRows[0]?.frgn_ntby_qty),
+            foreignNetBuy2d: toNum(investorRows[1]?.frgn_ntby_qty),
+            instNetBuy1d: toNum(investorRows[0]?.orgn_ntby_qty),
             instNetBuyCum20: null,
             pensionNetBuyCum20: null,
             programNetBuyToday: null,
@@ -582,7 +633,7 @@ export const screenChunkFn = createServerFn({ method: "POST" })
             tradingValueIsEstimated: false,
             avgTradingValue5d: null,
             dailyPrices: daily,
-            investorRows: [],
+            investorRows,
             foreignNetBuyAmount1d: null,
             instNetBuyAmount1d: null,
             newsItems: visibleNews,
@@ -606,12 +657,13 @@ export const screenChunkFn = createServerFn({ method: "POST" })
             judged.hit.verifyNote = verify || undefined;
             dips.push(judged.hit);
           }
+          setups.push(...detectDipSetups(env).map((s) => ({ ...s, verifyNote: verify || undefined })));
         } catch (e) {
           errors.push(`${item.name}: ${errMsg(e)}`);
           reasons.push("조회 실패");
         }
       }
-      return { ok: true as const, signs, dips, reasons, errors };
+      return { ok: true as const, signs, dips, setups, reasons, errors };
     } catch (e) {
       return { ok: false as const, error: errMsg(e) };
     }

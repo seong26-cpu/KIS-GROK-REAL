@@ -250,3 +250,112 @@ export function classifyDip(env: LiveSnapshot): { hit: DipHit | null; reason: st
   };
   return { hit, reason: "통과" };
 }
+
+export type DipSetupKind = "기관수급" | "양봉" | "동반매수" | "이평회복" | "낙폭반등";
+
+export type DipSetup = {
+  code: string;
+  name: string;
+  theme: string;
+  kind: DipSetupKind;
+  title: string;
+  detail: string;
+  price: number | null;
+  verifyNote?: string;
+};
+
+function mean(nums: number[]): number | null {
+  if (!nums.length) return null;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
+/** 일봉·투자자 수급에 숫자가 있을 때만. 없는 값은 조건에서 빼며 확률은 만들지 않는다. */
+export function detectDipSetups(env: LiveSnapshot): DipSetup[] {
+  const out: DipSetup[] = [];
+  const name = env.stockName ?? env.stockCode;
+  const theme = classifyTheme({ name, newsTitles: (env.newsItems ?? []).map((n) => n.title) });
+  const daily = env.dailyPrices;
+  const bar = daily[0];
+  const o = toNum(bar?.stck_oprc);
+  const h = toNum(bar?.stck_hgpr);
+  const c = toNum(bar?.stck_clpr) ?? env.currentPrice;
+  const v = toNum(bar?.acml_vol);
+  const priorVol = daily
+    .slice(1, 21)
+    .map((b) => toNum(b.acml_vol))
+    .filter((n): n is number => n != null && n > 0);
+  const avgV = mean(priorVol);
+  const volMul = v != null && avgV ? v / avgV : null;
+  const highs = daily
+    .slice(0, 20)
+    .map((b) => toNum(b.stck_hgpr))
+    .filter((n): n is number => n != null && n > 0);
+  const high20 = highs.length ? Math.max(...highs) : env.high20d;
+  const drawdown = c != null && high20 && high20 > 0 ? ((c - high20) / high20) * 100 : null;
+
+  const push = (kind: DipSetupKind, title: string, detail: string) => {
+    out.push({ code: env.stockCode, name, theme: theme.name, kind, title, detail, price: c });
+  };
+
+  if (o != null && h != null && c != null && c > o && v != null && volMul != null) {
+    const body = c - o;
+    const bodyPct = (body / o) * 100;
+    const upper = h - c;
+    if (bodyPct >= 3 && upper <= body * 0.5 && volMul >= 1.5) {
+      push(
+        "양봉",
+        bodyPct >= 5 ? "장대양봉" : "의미있는 양봉",
+        `몸통 +${bodyPct.toFixed(1)}%(시가 ${Math.round(o).toLocaleString("ko-KR")} → 종가 ${Math.round(c).toLocaleString("ko-KR")}), 윗꼬리 ${Math.round(upper).toLocaleString("ko-KR")}원, 거래량 ${volMul.toFixed(1)}배(직전 20일).`,
+      );
+    }
+  }
+
+  if (c != null && o != null && c > o && volMul != null && volMul >= 2 && drawdown != null && drawdown <= -15) {
+    push(
+      "낙폭반등",
+      "낙폭 과대 후 거래량 반등",
+      `20일 고가 대비 ${drawdown.toFixed(1)}%, 당일 양봉, 거래량 ${volMul.toFixed(1)}배.`,
+    );
+  }
+
+  const closes = daily.map((b) => toNum(b.stck_clpr)).filter((n): n is number => n != null && n > 0);
+  if (closes.length >= 6) {
+    const ma5 = mean(closes.slice(0, 5));
+    const ma5Prev = mean(closes.slice(1, 6));
+    const today = closes[0]!;
+    const yday = closes[1]!;
+    if (ma5 != null && ma5Prev != null && yday < ma5Prev && today > ma5) {
+      push(
+        "이평회복",
+        "5일선 회복",
+        `전일 종가 ${Math.round(yday).toLocaleString("ko-KR")} < 5일선 ${Math.round(ma5Prev).toLocaleString("ko-KR")}, 당일 종가 ${Math.round(today).toLocaleString("ko-KR")} > 5일선 ${Math.round(ma5).toLocaleString("ko-KR")}.`,
+      );
+    }
+  }
+
+  const inst = env.investorRows
+    .slice(0, 3)
+    .map((row) => toNum(row.orgn_ntby_qty))
+    .filter((n): n is number => n != null);
+  const foreign = toNum(env.investorRows[0]?.frgn_ntby_qty);
+  const instToday = inst[0];
+  if (instToday != null && instToday > 0 && inst.reduce((a, b) => a + b, 0) > 0) {
+    const sum = inst.reduce((a, b) => a + b, 0);
+    const where =
+      drawdown == null ? "고점 대비는 일봉이 부족해 계산하지 않았습니다." : `20일 고가 대비 ${drawdown.toFixed(1)}%.`;
+    push(
+      "기관수급",
+      drawdown != null && drawdown <= -8 ? "조정 구간 기관 순매수" : "기관 순매수",
+      `당일 기관 ${Math.round(instToday).toLocaleString("ko-KR")}주, 최근 ${inst.length}일 합 ${Math.round(sum).toLocaleString("ko-KR")}주. ${where}`,
+    );
+  }
+  if (foreign != null && foreign > 0 && instToday != null && instToday > 0) {
+    push(
+      "동반매수",
+      "외인·기관 동반 순매수",
+      `당일 외국인 ${Math.round(foreign).toLocaleString("ko-KR")}주, 기관 ${Math.round(instToday).toLocaleString("ko-KR")}주.`,
+    );
+  }
+
+  return out;
+}

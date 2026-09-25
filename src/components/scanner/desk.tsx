@@ -22,7 +22,7 @@ import { Dialog, DialogContent, DialogDesc, DialogTitle } from "@/components/ui/
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { ThemeBoard } from "@/components/scanner/theme-board";
+import { ThemeBoard, StockDetail } from "@/components/scanner/theme-board";
 import { IndexSpark } from "@/components/scanner/mini-charts";
 import {
   analyzeStockFn,
@@ -37,9 +37,10 @@ import {
   serverKeyStatusFn,
   fetchDartEventsFn,
   minuteCheckFn,
+  stockBoardFn,
 } from "@/lib/scanner/fns";
 import { AnalysisPanel, DipPanel, MarketPanel, SignsPanel } from "@/components/scanner/extra-menus";
-import type { DipHit, SignHit } from "@/lib/scanner/screens";
+import type { DipHit, DipSetup, SignHit } from "@/lib/scanner/screens";
 import type { DartEventHit } from "@/lib/dart/events";
 import type { MarketBrief } from "@/lib/scanner/types";
 import { rankClosingBetCandidates } from "@/lib/scanner/closing-bet";
@@ -106,7 +107,15 @@ export function ScannerDesk({
   const [screenTotal, setScreenTotal] = useState(0);
   const [signs, setSigns] = useState<SignHit[]>([]);
   const [dips, setDips] = useState<DipHit[]>([]);
+  const [setups, setSetups] = useState<DipSetup[]>([]);
   const [events, setEvents] = useState<DartEventHit[]>([]);
+  const [popup, setPopup] = useState<{
+    code: string;
+    name: string;
+    stock: BoardStock | null;
+    error: string | null;
+    loading: boolean;
+  } | null>(null);
   const [asOfDate, setAsOfDate] = useState("");
   const [asOfTime, setAsOfTime] = useState("15:30");
   const [minuteCode, setMinuteCode] = useState("");
@@ -366,6 +375,7 @@ export function ScannerDesk({
     setScreenErr(null);
     setSigns([]);
     setDips([]);
+    setSetups([]);
     setEvents([]);
     try {
       let eventNote = "";
@@ -388,6 +398,7 @@ export function ScannerDesk({
       setScreenNote(uniRes.universe.notes[0] ?? "A∪B∪C");
       const allSigns: SignHit[] = [];
       const allDips: DipHit[] = [];
+      const allSetups: DipSetup[] = [];
       const tally = new Map<string, number>();
       const errors: string[] = [];
       for (let i = 0; i < pool.length; i += 5) {
@@ -411,12 +422,14 @@ export function ScannerDesk({
         } else {
           allSigns.push(...res.signs);
           allDips.push(...res.dips);
+          allSetups.push(...(res.setups ?? []));
           for (const reason of res.reasons) tally.set(reason, (tally.get(reason) ?? 0) + 1);
           errors.push(...res.errors);
         }
         setScreenDone(Math.min(pool.length, i + chunk.length));
         setSigns([...allSigns]);
         setDips([...allDips].sort((a, b) => a.priority - b.priority));
+        setSetups([...allSetups]);
       }
       const breakdown = [...tally.entries()].map(([k, n]) => `${k} ${n}`).join(" · ");
       setScreenNote(
@@ -432,6 +445,37 @@ export function ScannerDesk({
       setScreenLoading(false);
     }
   }, [creds, scanSize, asOfDate, asOfTime]);
+
+  const openStock = useCallback(
+    (code: string, name: string, known?: BoardStock) => {
+      const hit = known ?? board.find((b) => b.code === code);
+      if (hit) {
+        setPopup({ code, name: hit.name, stock: hit, error: null, loading: false });
+        return;
+      }
+      if (!/^\d{6}$/.test(code)) {
+        setPopup({ code, name, stock: null, error: "6자리 종목코드가 없어 팝업을 열 수 없습니다.", loading: false });
+        return;
+      }
+      if (!creds) {
+        setPopup({ code, name, stock: null, error: "시세 키가 없습니다.", loading: false });
+        return;
+      }
+      setPopup({ code, name, stock: null, error: null, loading: true });
+      void stockBoardFn({ data: { ...creds, code, asOf: asOfDate || undefined, time: asOfTime || undefined } })
+        .then((res) => {
+          if (!res.ok) {
+            setPopup({ code, name, stock: null, error: res.error, loading: false });
+            return;
+          }
+          setPopup({ code, name: res.stock.name, stock: res.stock, error: null, loading: false });
+        })
+        .catch((e) => {
+          setPopup({ code, name, stock: null, error: e instanceof Error ? e.message : String(e), loading: false });
+        });
+    },
+    [asOfDate, asOfTime, board, creds],
+  );
 
   useEffect(() => {
     if ((nav !== "signs" && nav !== "dip") || !creds || screenOnce.current || screenLoading) return;
@@ -449,7 +493,7 @@ export function ScannerDesk({
   const navItems: { id: NavId; label: string; icon: typeof LayoutDashboard }[] = [
     { id: "scan", label: "자동스캔", icon: LayoutDashboard },
     { id: "closing", label: "종가베팅", icon: Crosshair },
-    { id: "analysis", label: "분석", icon: Search },
+    { id: "analysis", label: "분석 STOCK", icon: Search },
     { id: "minute", label: "분봉", icon: Activity },
     { id: "signs", label: "사전징후", icon: AlertTriangle },
     { id: "dip", label: "저가매수", icon: TrendingDown },
@@ -560,12 +604,7 @@ export function ScannerDesk({
                 <Menu className="size-4" />
               </button>
             </div>
-            <div className="hidden min-w-0 flex-1 items-center gap-6 text-sm text-fg-muted md:flex">
-              <span className={nav === "news" ? "font-medium text-fg" : ""}>시장신호</span>
-              <span className={nav === "scan" ? "font-medium text-fg" : ""}>테마보드</span>
-              <span className={nav === "closing" ? "font-medium text-fg" : ""}>종가베팅</span>
-              <span className={nav === "analysis" ? "font-medium text-fg" : ""}>분석</span>
-            </div>
+            <p className="min-w-0 truncate text-sm font-medium">{navItems.find((item) => item.id === nav)?.label}</p>
             <div className="flex items-center gap-2">
               {creds ? <Badge tone="info">실전</Badge> : <Badge tone="warn">키 없음</Badge>}
               <Button size="sm" disabled={!creds || scanning} onClick={() => void runScan()}>
@@ -574,6 +613,21 @@ export function ScannerDesk({
               </Button>
             </div>
           </header>
+          <div className="sticky top-14 z-10 flex gap-1 overflow-x-auto border-b border-border bg-bg px-4 py-2">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setNav(item.id)}
+                className={cn(
+                  "h-9 shrink-0 rounded-full px-3 text-sm",
+                  nav === item.id ? "bg-accent font-medium text-accent-fg" : "bg-bg-elevated text-fg-muted",
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
 
           <div className="ticker-track border-b border-border bg-bg-elevated">
             <p className="overflow-x-auto whitespace-nowrap px-4 py-2 font-mono text-[11px] text-fg-subtle">
@@ -596,7 +650,7 @@ export function ScannerDesk({
                         : nav === "dip"
                           ? "저가매수"
                           : nav === "analysis"
-                            ? "분석"
+                            ? "분석 STOCK"
                             : nav === "news"
                               ? "시황"
                               : "분봉"}{" "}
@@ -654,7 +708,12 @@ export function ScannerDesk({
                   <IndexSpark points={sihwang?.korean.find((t) => t.symbol === "KOSPI")?.history ?? []} label="코스피" />
                   <IndexSpark points={sihwang?.korean.find((t) => t.symbol === "KOSDAQ")?.history ?? []} label="코스닥" />
                 </div>
-                <ThemeBoard rows={board} fetchedLabel={scanAt ?? undefined} headlines={news} />
+                <ThemeBoard
+                  rows={board}
+                  fetchedLabel={scanAt ?? undefined}
+                  headlines={news}
+                  onOpen={(stock) => openStock(stock.code, stock.name, stock)}
+                />
               </>
             ) : null}
 
@@ -673,8 +732,14 @@ export function ScannerDesk({
                     <Card key={c.stockCode}>
                       <CardHeader>
                         <CardTitle>
-                          {c.stockName}{" "}
-                          <span className="font-mono text-sm font-normal text-fg-subtle">{c.stockCode}</span>
+                          <button
+                            type="button"
+                            className="text-left hover:underline"
+                            onClick={() => openStock(c.stockCode, c.stockName ?? c.stockCode)}
+                          >
+                            {c.stockName}{" "}
+                            <span className="font-mono text-sm font-normal text-fg-subtle">{c.stockCode}</span>
+                          </button>
                         </CardTitle>
                         <CardDesc>
                           충족 {c.matchScore}/5 · {c.reasonSummary}
@@ -750,6 +815,14 @@ export function ScannerDesk({
                   <Button type="submit" disabled={minuteLoading || !creds}>
                     {minuteLoading ? "조회 중…" : "분봉 확인"}
                   </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!/^\d{6}$/.test(minuteCode.trim().padStart(6, "0"))}
+                    onClick={() => openStock(minuteCode.trim().padStart(6, "0"), minuteCode.trim())}
+                  >
+                    차트·수급
+                  </Button>
                 </form>
                 {minuteNote ? <p className="text-sm text-fg-muted">{minuteNote}</p> : null}
                 {minuteRows.length ? (
@@ -783,7 +856,7 @@ export function ScannerDesk({
 
             {nav === "analysis" ? (
               <section className="flex flex-col gap-4">
-                <h2 className="text-lg font-semibold">분석</h2>
+                <h2 className="text-lg font-semibold">분석 STOCK</h2>
                 <p className="text-sm text-fg-muted">
                   종목코드·종목명 또는 KOSPI / KOSDAQ. 시장을 입력하면 그날 지수, 수급, 등락 종목 수, 시총 상위를 보여 줍니다.
                   목표주가는 네이버에 있을 때만 적습니다.
@@ -806,8 +879,8 @@ export function ScannerDesk({
                   </Button>
                 </form>
                 {analysisErr ? <p className="text-sm text-down">{analysisErr}</p> : null}
-                {marketBrief ? <MarketPanel brief={marketBrief} /> : null}
-                {analysis ? <AnalysisPanel report={analysis} /> : null}
+                {marketBrief ? <MarketPanel brief={marketBrief} onPick={openStock} /> : null}
+                {analysis ? <AnalysisPanel report={analysis} onPick={openStock} /> : null}
               </section>
             ) : null}
 
@@ -823,8 +896,10 @@ export function ScannerDesk({
                 </button>
                 {screenLoading ? <Progress value={screenTotal ? (screenDone / screenTotal) * 100 : 5} /> : null}
                 {screenErr ? <p className="text-sm text-down">{screenErr}</p> : null}
-                {nav === "signs" ? <SignsPanel signs={signs} note={screenNote} skipped={screenSkip} /> : null}
-                {nav === "dip" ? <DipPanel dips={dips} events={events} note={screenNote} skipped={screenSkip} /> : null}
+                {nav === "signs" ? <SignsPanel signs={signs} note={screenNote} skipped={screenSkip} onPick={openStock} /> : null}
+                {nav === "dip" ? (
+                  <DipPanel dips={dips} events={events} setups={setups} note={screenNote} skipped={screenSkip} onPick={openStock} />
+                ) : null}
               </section>
             ) : null}
 
@@ -946,6 +1021,25 @@ export function ScannerDesk({
               {connecting ? "확인 중…" : "저장하고 연결"}
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(popup)} onOpenChange={(v) => !v && setPopup(null)}>
+        <DialogContent className="max-w-2xl">
+          {popup?.loading ? (
+            <>
+              <DialogTitle>
+                {popup.name} <span className="font-mono text-sm font-normal text-fg-subtle">{popup.code}</span>
+              </DialogTitle>
+              <DialogDesc>시세·차트·수급을 불러오는 중입니다.</DialogDesc>
+            </>
+          ) : popup?.error ? (
+            <>
+              <DialogTitle>{popup.name || popup.code}</DialogTitle>
+              <DialogDesc>{popup.error}</DialogDesc>
+            </>
+          ) : popup?.stock ? (
+            <StockDetail stock={popup.stock} />
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>

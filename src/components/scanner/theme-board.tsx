@@ -42,14 +42,17 @@ export function ThemeBoard({
   rows,
   fetchedLabel,
   headlines = [],
+  onOpen,
 }: {
   rows: BoardStock[];
   fetchedLabel?: string;
   headlines?: NewsItem[];
+  onOpen?: (stock: BoardStock) => void;
 }) {
   const [sort, setSort] = useState<SortKey>("change");
   const [themeN, setThemeN] = useState(4);
   const [open, setOpen] = useState<BoardStock | null>(null);
+  const pick = (stock: BoardStock) => (onOpen ? onOpen(stock) : setOpen(stock));
 
   const cards = useMemo(() => buildThemeCards(rows, sort, themeN), [rows, sort, themeN]);
 
@@ -136,15 +139,17 @@ export function ThemeBoard({
 
       <div className="grid gap-4 lg:grid-cols-2">
         {cards.map((card) => (
-          <ThemeCardView key={card.id} card={card} onOpen={setOpen} />
+          <ThemeCardView key={card.id} card={card} onOpen={pick} />
         ))}
       </div>
 
+      {onOpen ? null : (
       <Dialog open={Boolean(open)} onOpenChange={(v) => !v && setOpen(null)}>
         <DialogContent className="max-w-2xl">
           {open ? <StockDetail stock={open} /> : null}
         </DialogContent>
       </Dialog>
+      )}
     </div>
   );
 }
@@ -220,7 +225,7 @@ function ThemeCardView({ card, onOpen }: { card: ThemeCard; onOpen: (s: BoardSto
   );
 }
 
-function StockDetail({ stock }: { stock: BoardStock }) {
+export function StockDetail({ stock }: { stock: BoardStock }) {
   const primary = stock.cases[0];
   return (
     <>

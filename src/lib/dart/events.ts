@@ -1,4 +1,4 @@
-export type EventCategory = "실적" | "신제품" | "임상" | "계약" | "산업";
+export type EventCategory = "실적" | "설명회" | "신제품" | "임상" | "계약" | "산업";
 
 export type DartEventHit = {
   code: string;
@@ -13,9 +13,10 @@ export type DartEventHit = {
 
 const RULES: { category: EventCategory; re: RegExp }[] = [
   { category: "임상", re: /임상|탑라인|품목허가|식약처|적응증/ },
-  { category: "계약", re: /공급계약|단일판매|수주|양해각서|업무협약|판매계약|신규계약/ },
+  { category: "계약", re: /공급계약|단일판매|수주|양해각서|업무협약|판매계약|신규계약|기술이전/ },
   { category: "신제품", re: /신제품|신기술|양산|개발성공|개발완료|상용화|출시/ },
-  { category: "실적", re: /잠정.?실적|영업.?실적|실적발표|실적설명|기업설명회|컨퍼런스콜/ },
+  { category: "설명회", re: /기업설명회|IR개최|컨퍼런스콜|실적설명/ },
+  { category: "실적", re: /잠정.?실적|영업.?실적|실적발표/ },
   { category: "산업", re: /시설투자|증설|생산능력|캐파|CAPA/i },
 ];
 
@@ -38,7 +39,7 @@ function ymd(offset: number): string {
 }
 
 function upcomingNote(title: string, category: EventCategory): string {
-  if (category !== "실적") {
+  if (category !== "실적" && category !== "설명회") {
     return category === "산업"
       ? "투자·증설 공시입니다. 금리 인하나 AI 수요는 이 제목에 없으면 붙이지 않습니다."
       : "제목에 적힌 사실만 사용합니다. 향후 일정이 제목에 없으면 날짜를 만들지 않습니다.";

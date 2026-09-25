@@ -1,17 +1,19 @@
 import { SrChart } from "@/components/scanner/mini-charts";
 import { Card, CardDesc, CardHeader, CardTitle } from "@/components/ui/card";
 import type { AnalysisReport, MarketBrief } from "@/lib/scanner/types";
-import type { DipHit, SignHit } from "@/lib/scanner/screens";
+import type { DipHit, DipSetup, SignHit } from "@/lib/scanner/screens";
 import type { DartEventHit } from "@/lib/dart/events";
 import { fmtWon } from "@/lib/utils";
 
-export function AnalysisPanel({ report }: { report: AnalysisReport }) {
+export function AnalysisPanel({ report, onPick }: { report: AnalysisReport; onPick?: (code: string, name: string) => void }) {
   const lv = report.levels;
   return (
     <Card>
       <CardHeader>
         <CardTitle>
-          {report.stockName} <span className="font-mono text-sm text-fg-subtle">{report.stockCode}</span>
+          <button type="button" className="text-left hover:underline" onClick={() => onPick?.(report.stockCode, report.stockName ?? report.stockCode)}>
+            {report.stockName} <span className="font-mono text-sm text-fg-subtle">{report.stockCode}</span>
+          </button>
         </CardTitle>
         <CardDesc>
           시황 {report.marketState} · 매수 {report.recommend == null ? "판단불가" : report.recommend ? "Yes" : "No"} ·{" "}
@@ -83,7 +85,7 @@ export function AnalysisPanel({ report }: { report: AnalysisReport }) {
   );
 }
 
-export function MarketPanel({ brief }: { brief: MarketBrief }) {
+export function MarketPanel({ brief, onPick }: { brief: MarketBrief; onPick?: (code: string, name: string) => void }) {
   return (
     <section className="flex flex-col gap-3">
       <Card>
@@ -136,7 +138,9 @@ export function MarketPanel({ brief }: { brief: MarketBrief }) {
         <ul className="space-y-1 text-sm">
           {brief.leaders.map((s) => (
             <li key={s.code}>
-              {s.name} <span className="font-mono text-fg-subtle">{s.code}</span> {s.price} · {s.change}
+              <button type="button" className="text-left hover:underline" onClick={() => onPick?.(s.code, s.name)}>
+                {s.name} <span className="font-mono text-fg-subtle">{s.code}</span> {s.price} · {s.change}
+              </button>
             </li>
           ))}
         </ul>
@@ -168,10 +172,12 @@ export function SignsPanel({
   signs,
   note,
   skipped,
+  onPick,
 }: {
   signs: SignHit[];
   note: string;
   skipped: string;
+  onPick?: (code: string, name: string) => void;
 }) {
   return (
     <section className="flex flex-col gap-3">
@@ -203,8 +209,10 @@ export function SignsPanel({
                   {rows.map((s) => (
                     <tr key={`${s.code}-${s.title}-${s.evidence}`} className="border-t border-border align-top">
                       <td className="px-3 py-2">
-                        {s.name}
-                        <div className="font-mono text-xs text-fg-subtle">{s.code}</div>
+                        <button type="button" className="text-left hover:underline" onClick={() => onPick?.(s.code, s.name)}>
+                          {s.name}
+                          <div className="font-mono text-xs text-fg-subtle">{s.code}</div>
+                        </button>
                       </td>
                       <td className="px-3 py-2">
                         <div className="font-medium">{s.title}</div>
@@ -232,25 +240,83 @@ export function SignsPanel({
 export function DipPanel({
   dips,
   events,
+  setups,
   note,
   skipped,
+  onPick,
 }: {
   dips: DipHit[];
   events: DartEventHit[];
+  setups: DipSetup[];
   note: string;
   skipped: string;
+  onPick?: (code: string, name: string) => void;
 }) {
   const top = dips.filter((d) => d.priority === 1);
   const wait = dips.filter((d) => d.priority !== 1);
-  const groups = ["실적", "신제품", "임상", "계약", "산업"] as const;
+  const groups = ["실적", "설명회", "신제품", "임상", "계약", "산업"] as const;
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-lg font-semibold">저가매수</h2>
       <p className="text-sm text-fg-muted">
-        거래대금 상위는 이미 급등한 종목이 많아, 아래 목록은 DART 전체 공시 제목에서 고릅니다. 업종은 전력·에너지·지주·조선·방산·2차전지·바이오·로봇·반도체·AI
-        를 먼저 보여 줍니다. {note}
+        공시 제목만으로는 기업설명회가 대부분입니다. 아래는 같은 유니버스의 일봉·투자자 수급으로 고른 조건입니다. 기관 순매수, 몸통 3% 이상·윗꼬리가 몸통 절반 이하·거래량 1.5배인
+        양봉, 외인·기관 동반 순매수, 5일선 회복, 20일 고점 대비 -15% 이하에서 거래량 2배 양봉. 숫자가 없으면 그 조건은 빼며 목표가는 만들지 않습니다. 종목을 누르면 차트·수급
+        팝업이 열립니다. {note}
       </p>
       <p className="text-xs text-fg-subtle">{skipped}</p>
+      {(
+        [
+          ["기관수급", "기관 수급"],
+          ["양봉", "의미있는 양봉"],
+          ["동반매수", "외인·기관 동반"],
+          ["이평회복", "5일선 회복"],
+          ["낙폭반등", "낙폭 후 반등"],
+        ] as const
+      ).map(([kind, title]) => {
+        const rows = setups.filter((s) => s.kind === kind).slice(0, 20);
+        return (
+          <div key={kind} className="overflow-x-auto rounded-lg border border-border">
+            <p className="border-b border-border px-3 py-2 text-sm font-semibold">
+              {title}
+              <span className="ml-2 font-normal text-fg-subtle">{rows.length}종목</span>
+            </p>
+            {rows.length ? (
+              <table className="w-full min-w-[640px] text-left text-sm">
+                <thead className="text-xs text-fg-subtle">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">종목</th>
+                    <th className="px-3 py-2 font-medium">조건</th>
+                    <th className="px-3 py-2 font-medium">근거</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((s) => (
+                    <tr key={`${s.kind}-${s.code}-${s.title}`} className="border-t border-border align-top">
+                      <td className="px-3 py-2">
+                        <button type="button" className="text-left hover:underline" onClick={() => onPick?.(s.code, s.name)}>
+                          {s.name}
+                          <div className="font-mono text-xs text-fg-subtle">{s.code}</div>
+                        </button>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium">{s.title}</div>
+                        <div className="text-xs text-fg-subtle">{s.theme}</div>
+                      </td>
+                      <td className="px-3 py-2 text-fg-muted">
+                        {s.detail}
+                        {s.verifyNote ? <p className="mt-1 text-xs text-fg">{s.verifyNote}</p> : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="px-3 py-3 text-sm text-fg-subtle">이번 스캔에서 해당 없음. 수급은 기준일을 비웠을 때만 조회합니다.</p>
+            )}
+          </div>
+        );
+      })}
+      <h3 className="mt-2 text-sm font-semibold">DART 공시</h3>
       {!events.length ? (
         <Card>
           <p className="text-sm text-fg-muted">이번 검색에서 조건에 맞는 공시가 없습니다.</p>
@@ -266,7 +332,9 @@ export function DipPanel({
               <Card key={`${e.code}-${e.category}-${e.title}`}>
                 <CardHeader>
                   <CardTitle>
-                    {e.theme} · {e.name} <span className="font-mono text-sm font-normal text-fg-subtle">{e.code}</span>
+                    <button type="button" className="text-left hover:underline" onClick={() => onPick?.(e.code, e.name)}>
+                      {e.theme} · {e.name} <span className="font-mono text-sm font-normal text-fg-subtle">{e.code}</span>
+                    </button>
                   </CardTitle>
                   <CardDesc>
                     {e.filedOn} 접수
@@ -303,7 +371,9 @@ export function DipPanel({
         <Card key={d.code}>
           <CardHeader>
             <CardTitle>
-              {d.priority}순위 · {d.name} <span className="font-mono text-sm font-normal text-fg-subtle">{d.code}</span>
+              <button type="button" className="text-left hover:underline" onClick={() => onPick?.(d.code, d.name)}>
+                {d.priority}순위 · {d.name} <span className="font-mono text-sm font-normal text-fg-subtle">{d.code}</span>
+              </button>
             </CardTitle>
             <CardDesc>
               {d.theme} · {fmtWon(d.price)} · 고점 {d.fromHighPct}% · 저점 +{d.fromLowPct}% · {d.windowDays}일봉
