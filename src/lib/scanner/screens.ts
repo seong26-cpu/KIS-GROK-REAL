@@ -1,5 +1,5 @@
 import type { LiveSnapshot, NewsItem } from "./types";
-import { computeMa, computeMacd, computeRsi, toNum } from "./indicators";
+import { computeAtr, computeMa, computeMacd, computeRsi, computeSupportResistance, toNum } from "./indicators";
 import { classifyTheme } from "./themes";
 
 const GROWTH = new Set([
@@ -26,6 +26,12 @@ export type SignHit = {
   detail: string;
   evidence: string;
   excerpt: string;
+  price: number | null;
+  buy: number | null;
+  stop: number | null;
+  take: number | null;
+  wait: string;
+  impact: "호재" | "악재" | "구분 보류";
   verifyNote?: string;
 };
 
@@ -69,13 +75,37 @@ export function detectSigns(env: LiveSnapshot): SignHit[] {
   const name = env.stockName ?? env.stockCode;
   const items = env.newsItems ?? [];
   const text = titles(items);
+  const daily = env.dailyPrices;
+  const price = env.currentPrice ?? toNum(daily[0]?.stck_clpr);
+  const sr = computeSupportResistance(daily, price, computeMa(daily, 20), computeMa(daily, 60), computeAtr(daily, 14));
   const clip = (needle: string) => {
     const hit = items.find((n) => n.title.includes(needle) || (n.summary ?? "").includes(needle));
     const body = (hit?.summary || hit?.title || "").replace(/\s+/g, " ").trim();
     return body.slice(0, 180);
   };
   const push = (kind: SignHit["kind"], title: string, detail: string, evidence: string) => {
-    out.push({ code: env.stockCode, name, kind, title, detail, evidence, excerpt: clip(evidence) || detail });
+    const bad = kind === "급락" || /감사|사임|담보|음봉/.test(title);
+    const impact: SignHit["impact"] = bad
+      ? "악재"
+      : kind === "공시" || /위꼬리|절벽|CB|BW|리픽싱/.test(title)
+        ? "구분 보류"
+        : "호재";
+    const wait = /음봉|위꼬리|절벽/.test(title) ? "다음 1~3거래일 · 일봉으로 확인" : "다음 거래일 · 후속 공시가 있을 때만";
+    out.push({
+      code: env.stockCode,
+      name,
+      kind,
+      title,
+      detail,
+      evidence,
+      excerpt: clip(evidence) || detail,
+      price,
+      buy: sr.support1,
+      stop: sr.support2,
+      take: sr.resistance1,
+      wait,
+      impact,
+    });
   };
 
   const audit = hitNews(text, [/감사보고서/, /감사인.?교체/, /감사의견/, /의견거절/, /한정.?의견/]);
@@ -106,11 +136,9 @@ export function detectSigns(env: LiveSnapshot): SignHit[] {
   const cb = hitNews(text, [/리픽싱/, /전환가액/, /전환사채/, /\bCB\b/, /\bBW\b/]);
   if (cb) push("급등", "CB/BW 언급", "전환사채·리픽싱 제목입니다. 최저 리픽싱 도달 여부는 공시 숫자 없이 단정하지 않습니다.", cb);
 
-  const daily = env.dailyPrices;
   const vols = daily.slice(0, 21).map((b) => toNum(b.acml_vol)).filter((n): n is number => n != null && n > 0);
   const avg20 = vols.length >= 6 ? vols.slice(1, 21).reduce((a, b) => a + b, 0) / Math.max(1, vols.slice(1, 21).length) : null;
   const todayV = vols[0] ?? null;
-  const price = env.currentPrice;
   const high20 = Math.max(
     ...daily
       .slice(0, 20)
@@ -261,6 +289,10 @@ export type DipSetup = {
   title: string;
   detail: string;
   price: number | null;
+  buy: number | null;
+  stop: number | null;
+  take: number | null;
+  wait: string;
   score: number;
   hits: string[];
   verifyNote?: string;
@@ -362,6 +394,12 @@ export function detectDipSetups(env: LiveSnapshot): DipSetup[] {
   const score = flags.length;
   const pass = flowN > 0 ? priceN >= 1 && score >= 2 : priceN >= 2;
   if (!pass) return [];
+  const sr = computeSupportResistance(daily, c, ma20, computeMa(daily, 60), computeAtr(daily, 14));
+  const wait = flags.some((f) => f.kind === "낙폭반등")
+    ? "5~10거래일 · 20일 고점과의 간격을 일봉으로 확인"
+    : flags.some((f) => f.kind === "이평회복")
+      ? "1~3거래일 · 5일선 위에 머물는지 확인"
+      : "1~3거래일 · 양봉 다음 일봉";
   return [
     {
       code: env.stockCode,
@@ -371,6 +409,10 @@ export function detectDipSetups(env: LiveSnapshot): DipSetup[] {
       title: `조건 ${score}개 겹침`,
       detail: flags.map((f) => `${f.title} — ${f.detail}`).join(" "),
       price: c,
+      buy: sr.support1,
+      stop: sr.support2,
+      take: sr.resistance1,
+      wait,
       score,
       hits: flags.map((f) => f.title),
     },

@@ -659,25 +659,37 @@ export function ScannerDesk({
                   <input
                     type="date"
                     value={asOfDate}
-                    onChange={(e) => setAsOfDate(e.target.value)}
+                    onChange={(e) => {
+                      setAsOfDate(e.target.value);
+                      if (!e.target.value) setAsOfTime("");
+                    }}
                     className="h-9 rounded-md border border-border bg-bg px-2 text-sm text-fg"
                   />
                 </label>
                 <label className="flex flex-col gap-1 text-xs text-fg-subtle">
                   시각
-                  <input
-                    type="time"
-                    value={asOfTime}
-                    onChange={(e) => setAsOfTime(e.target.value)}
-                    className="h-9 rounded-md border border-border bg-bg px-2 text-sm text-fg"
-                  />
+                  <span className="flex items-center gap-1">
+                    <input
+                      type="time"
+                      value={asOfTime}
+                      onChange={(e) => setAsOfTime(e.target.value)}
+                      className="h-9 rounded-md border border-border bg-bg px-2 text-sm text-fg"
+                    />
+                    <button
+                      type="button"
+                      className="h-9 rounded-md px-2 text-xs text-fg-muted hover:bg-bg-subtle"
+                      onClick={() => setAsOfTime("")}
+                    >
+                      시각 지우기
+                    </button>
+                  </span>
                 </label>
                 <p className="max-w-xl text-xs text-fg-muted">
                   {nav === "news"
                     ? "날짜를 비우면 최신 시황입니다. 날짜를 넣으면 그날을 포함한 이전 3주의 기사만 남깁니다. 네이버증권, 연합뉴스, 구글 뉴스를 함께 가져옵니다."
                     : nav === "analysis" || nav === "minute"
                     ? "날짜를 비우면 최신 시세입니다. 날짜를 넣으면 그날 일봉으로 조건을 계산하고, 시각까지 분봉을 찾습니다. 분봉이 없으면 시간봉, 그것도 없으면 일봉 종가입니다. 다음 거래일 시가·고가·저가·종가로 유효 여부를 적습니다."
-                    : "날짜를 비우면 최신 시세입니다. 이 메뉴는 종목이 많아 지정일 일봉 종가로 조건을 계산합니다. 다음 거래일 시가·고가·저가·종가가 기준가·손절 대비 어디인지 적습니다. 시각별 가격은 분석 또는 분봉에서 종목별로 확인하세요."}
+                    : "날짜와 시각을 비우면 최신 시세입니다. 날짜만 있으면 그날 일봉 종가입니다. 시각을 남기면 분석·분봉에서만 그 시각 가격을 찾습니다."}
                 </p>
               </div>
             ) : null}
@@ -792,7 +804,7 @@ export function ScannerDesk({
                     setMinuteLoading(true);
                     setMinuteNote("");
                     void minuteCheckFn({
-                      data: { ...creds, code: minuteCode.trim(), date: asOfDate || new Date().toISOString().slice(0, 10), time: asOfTime },
+                      data: { ...creds, code: minuteCode.trim(), date: asOfDate || new Date().toISOString().slice(0, 10), time: asOfTime || undefined },
                     })
                       .then((res) => {
                         if (!res.ok) {
