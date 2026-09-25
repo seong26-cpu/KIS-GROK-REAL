@@ -58,11 +58,11 @@ export async function fetchNaverConsensus(code: string, price: number | null): P
   };
 }
 
-export async function buildMarketBrief(market: "KOSPI" | "KOSDAQ"): Promise<MarketBrief> {
+export async function buildMarketBrief(market: "KOSPI" | "KOSDAQ", asOf?: string): Promise<MarketBrief> {
   const [detail, tape, news] = await Promise.all([
     getJson(`https://m.stock.naver.com/api/index/${market}/integration`),
     fetchSihwang().catch(() => null),
-    fetchMarketNews().catch(() => []),
+    fetchMarketNews(asOf).catch(() => []),
   ]);
   const tapeItem = tape?.korean.find((t) => t.symbol === market);
   const infos = Array.isArray(detail?.totalInfos) ? (detail!.totalInfos as Record<string, unknown>[]) : [];
@@ -138,7 +138,12 @@ export async function buildMarketBrief(market: "KOSPI" | "KOSDAQ"): Promise<Mark
     breadth,
     sectors: [...groups.entries()].map(([name, names]) => ({ name, names })),
     leaders,
-    news: (news ?? []).slice(0, 8).map((n) => ({ title: n.title, source: n.source ?? "", date: n.pubDate ?? "" })),
+    news: (news ?? []).slice(0, 8).map((n) => ({
+      title: n.title,
+      source: n.source ?? "",
+      date: n.pubDate ?? "",
+      summary: n.summary || undefined,
+    })),
     outlook: `${market} ${tone} ${breadthTone} ${flowTone} 환율·해외지수는 아래 수치만 참고하세요. 매수 추천이 아닙니다.`.replace(/\s+/g, " ").trim(),
     disclaimer: "투자 조언이 아닙니다. 시세·수급·뉴스는 조회 시점의 공개 자료이며, 목표주가나 수익률은 만들지 않았습니다. 투자 손실 책임은 본인에게 있습니다.",
   };

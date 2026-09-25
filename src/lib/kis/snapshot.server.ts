@@ -7,6 +7,7 @@ export async function buildSnapshot(
   client: KisClient,
   code: string,
   seed?: Partial<RankedStock> & { marketCapEok?: number | null; listedShares?: number | null; avgTradingValue?: number | null },
+  asOf?: string,
 ): Promise<LiveSnapshot> {
   const errors: string[] = [];
   let cur: Record<string, unknown> = {};
@@ -76,7 +77,7 @@ export async function buildSnapshot(
   const name = String(cur.hts_kor_isnm ?? seed?.name ?? "").trim() || null;
   let news = null;
   try {
-    news = await fetchStockNews(code, name ?? undefined);
+    news = await fetchStockNews(code, name ?? undefined, asOf);
   } catch {
     news = null;
   }

@@ -25,6 +25,8 @@ export type SignHit = {
   title: string;
   detail: string;
   evidence: string;
+  excerpt: string;
+  verifyNote?: string;
 };
 
 export type DipHit = {
@@ -47,6 +49,7 @@ export type DipHit = {
   news: string[];
   dartLines?: string[];
   note: string;
+  verifyNote?: string;
 };
 
 function titles(news: NewsItem[] | null): string {
@@ -64,9 +67,15 @@ function hitNews(text: string, patterns: RegExp[]): string | null {
 export function detectSigns(env: LiveSnapshot): SignHit[] {
   const out: SignHit[] = [];
   const name = env.stockName ?? env.stockCode;
-  const text = titles(env.newsItems);
+  const items = env.newsItems ?? [];
+  const text = titles(items);
+  const clip = (needle: string) => {
+    const hit = items.find((n) => n.title.includes(needle) || (n.summary ?? "").includes(needle));
+    const body = (hit?.summary || hit?.title || "").replace(/\s+/g, " ").trim();
+    return body.slice(0, 180);
+  };
   const push = (kind: SignHit["kind"], title: string, detail: string, evidence: string) => {
-    out.push({ code: env.stockCode, name, kind, title, detail, evidence });
+    out.push({ code: env.stockCode, name, kind, title, detail, evidence, excerpt: clip(evidence) || detail });
   };
 
   const audit = hitNews(text, [/감사보고서/, /감사인.?교체/, /감사의견/, /의견거절/, /한정.?의견/]);

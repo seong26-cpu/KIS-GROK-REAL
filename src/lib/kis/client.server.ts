@@ -249,6 +249,17 @@ export class KisClient {
     return asRows(data.output).slice(0, period).map(rowToBar);
   }
 
+  async getMinuteBars(code: string, ymd: string, hhmmss: string): Promise<Record<string, unknown>[]> {
+    const data = await this.get("/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice", "FHKST03010230", {
+      FID_COND_MRKT_DIV_CODE: "J",
+      FID_INPUT_ISCD: code,
+      FID_INPUT_DATE_1: ymd,
+      FID_INPUT_HOUR_1: hhmmss,
+      FID_PW_DATA_INCU_YN: "Y",
+    });
+    return asRows(data.output2 ?? data.output1 ?? data.output);
+  }
+
   async getInvestorTrend(code: string): Promise<InvestorRow[]> {
     const data = await this.get("/uapi/domestic-stock/v1/quotations/inquire-investor", "FHKST01010900", {
       FID_COND_MRKT_DIV_CODE: "J",

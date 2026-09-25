@@ -64,9 +64,15 @@ export function AnalysisPanel({ report }: { report: AnalysisReport }) {
         </ul>
       ) : null}
       {report.news.length ? (
-        <ul className="mt-3 space-y-1 text-sm text-fg-muted">
+        <ul className="mt-3 space-y-2 text-sm text-fg-muted">
           {report.news.slice(0, 6).map((n) => (
-            <li key={n.title}>{n.title}</li>
+            <li key={`${n.source ?? ""}-${n.title}`}>
+              <p>
+                <span className="text-fg-subtle">{n.source ?? "뉴스"} · </span>
+                {n.title}
+              </p>
+              {n.summary ? <p className="text-xs leading-relaxed">{n.summary}</p> : null}
+            </li>
           ))}
         </ul>
       ) : (
@@ -141,10 +147,13 @@ export function MarketPanel({ brief }: { brief: MarketBrief }) {
       {brief.news.length ? (
         <Card>
           <p className="mb-2 text-sm font-semibold">시황 뉴스</p>
-          <ul className="space-y-1 text-sm text-fg-muted">
+          <ul className="space-y-2 text-sm text-fg-muted">
             {brief.news.map((n) => (
               <li key={n.title}>
-                {n.title} <span className="text-fg-subtle">· {n.source}</span>
+                <p>
+                  {n.title} <span className="text-fg-subtle">· {n.source}</span>
+                </p>
+                {n.summary ? <p className="text-xs leading-relaxed">{n.summary}</p> : null}
               </li>
             ))}
           </ul>
@@ -173,24 +182,49 @@ export function SignsPanel({
         더 채우려면: 매수·매도 수량은 DART 공시 본문(rcpNo)을 더 열어야 합니다. 단주 매매는 KIS 호가 API가 필요합니다.
         제목과 재무제표에 없는 확률·수량은 만들지 않습니다.
       </p>
-      {!signs.length ? (
-        <Card>
-          <p className="text-sm text-fg-muted">이번에 스캔한 A∪B∪C 종목에서 기사·일봉으로 확인된 징후가 없습니다.</p>
-        </Card>
-      ) : (
-        signs.map((s) => (
-          <Card key={`${s.code}-${s.title}`}>
-            <CardHeader>
-              <CardTitle>
-                {s.kind} · {s.name} <span className="font-mono text-sm font-normal text-fg-subtle">{s.code}</span>
-              </CardTitle>
-              <CardDesc>{s.title}</CardDesc>
-            </CardHeader>
-            <p className="text-sm text-fg-muted">{s.detail}</p>
-            <p className="mt-1 text-xs text-fg-subtle">근거: {s.evidence}</p>
-          </Card>
-        ))
-      )}
+      {(["급등", "급락", "공시"] as const).map((kind) => {
+        const rows = signs.filter((s) => s.kind === kind);
+        return (
+          <div key={kind} className="overflow-x-auto rounded-lg border border-border">
+            <p className="border-b border-border px-3 py-2 text-sm font-semibold">
+              {kind}
+              <span className="ml-2 font-normal text-fg-subtle">{rows.length}건</span>
+            </p>
+            {rows.length ? (
+              <table className="w-full min-w-[640px] text-left text-sm">
+                <thead className="text-xs text-fg-subtle">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">종목</th>
+                    <th className="px-3 py-2 font-medium">이유</th>
+                    <th className="px-3 py-2 font-medium">내용</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((s) => (
+                    <tr key={`${s.code}-${s.title}-${s.evidence}`} className="border-t border-border align-top">
+                      <td className="px-3 py-2">
+                        {s.name}
+                        <div className="font-mono text-xs text-fg-subtle">{s.code}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium">{s.title}</div>
+                        <div className="text-xs text-fg-muted">{s.detail}</div>
+                        <div className="text-xs text-fg-subtle">근거 {s.evidence}</div>
+                      </td>
+                      <td className="px-3 py-2 text-fg-muted">
+                        {s.excerpt || "본문 요약을 받지 못했습니다."}
+                        {s.verifyNote ? <p className="mt-1 text-xs text-fg">{s.verifyNote}</p> : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="px-3 py-3 text-sm text-fg-subtle">이번 스캔에서 해당 없음</p>
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }
@@ -299,6 +333,7 @@ export function DipPanel({
             <p className="mt-2 text-xs text-fg-subtle">최근 뉴스 없음 — 이벤트(실적·임상·계약)는 적지 않습니다.</p>
           )}
           <p className="mt-2 text-xs text-fg-subtle">{d.note}</p>
+          {d.verifyNote ? <p className="mt-1 text-xs text-fg">{d.verifyNote}</p> : null}
         </Card>
       ))}
     </section>

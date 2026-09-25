@@ -15,6 +15,7 @@ function trendFromTape(snap: SihwangSnapshot | null, symbol: string): AnalysisRe
 export async function buildAnalysis(
   env: LiveSnapshot,
   sihwang: SihwangSnapshot | null,
+  asOf?: string,
 ): Promise<AnalysisReport> {
   const errors = [...env.errors];
   const kospi = sihwang?.korean.find((t) => t.symbol === "KOSPI");
@@ -80,7 +81,7 @@ export async function buildAnalysis(
 
   let econ: NewsItem[] = [];
   try {
-    econ = (await fetchMarketNews()) ?? [];
+    econ = (await fetchMarketNews(asOf)) ?? [];
   } catch {
     econ = [];
   }
@@ -167,7 +168,7 @@ export async function buildAnalysis(
         .join(" / ")}`
     : "투자자별 수급을 확보하지 못했습니다.";
   const newsLine = news.length
-    ? `수집 기사 ${news.length}건. 제목만 인용하며 실적·수주 숫자는 기사에 적힌 경우에만 확인하세요.`
+    ? `수집 기사 ${news.length}건. 제목과 받아 온 본문 일부만 보여 주며, 실적·수주 숫자는 기사에 적힌 경우에만 확인하세요.`
     : "최근 뉴스를 확보하지 못해 펀더멘털 문장은 쓰지 않습니다.";
   const summary = [
     `${name}(${env.stockCode}) 현재가 ${won(p)}, 당일 ${env.changeRatePct == null ? "등락 미확보" : `${env.changeRatePct >= 0 ? "+" : ""}${env.changeRatePct.toFixed(2)}%`}. 시황은 ${marketState}. ${marketReason}`,

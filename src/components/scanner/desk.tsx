@@ -13,7 +13,6 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
-  Sparkles,
   TrendingDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -37,10 +36,9 @@ import {
   screenChunkFn,
   serverKeyStatusFn,
   fetchDartEventsFn,
+  minuteCheckFn,
 } from "@/lib/scanner/fns";
 import { AnalysisPanel, DipPanel, MarketPanel, SignsPanel } from "@/components/scanner/extra-menus";
-import { SkillPicksPanel } from "@/components/scanner/skill-picks-panel";
-import { skillPicksFn } from "@/lib/scanner/skill-picks-fn";
 import type { DipHit, SignHit } from "@/lib/scanner/screens";
 import type { DartEventHit } from "@/lib/dart/events";
 import type { MarketBrief } from "@/lib/scanner/types";
@@ -57,10 +55,9 @@ import type {
   TokenStatus,
   UniverseSnapshot,
 } from "@/lib/scanner/types";
-import type { SkillPicksResult } from "@/lib/scanner/skill-picks";
 import { cn, fmtPct, fmtWon } from "@/lib/utils";
 
-type NavId = "scan" | "closing" | "analysis" | "picks" | "news" | "keys" | "signs" | "dip";
+type NavId = "scan" | "closing" | "analysis" | "news" | "keys" | "signs" | "dip" | "minute";
 
 export function ScannerDesk({
   initialSihwang = null,
@@ -101,7 +98,6 @@ export function ScannerDesk({
   const [marketBrief, setMarketBrief] = useState<MarketBrief | null>(null);
   const [analysisErr, setAnalysisErr] = useState<string | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
-  const [skillOut, setSkillOut] = useState<SkillPicksResult | null>(null);
   const [screenLoading, setScreenLoading] = useState(false);
   const [screenErr, setScreenErr] = useState<string | null>(null);
   const [screenNote, setScreenNote] = useState("");
@@ -111,6 +107,12 @@ export function ScannerDesk({
   const [signs, setSigns] = useState<SignHit[]>([]);
   const [dips, setDips] = useState<DipHit[]>([]);
   const [events, setEvents] = useState<DartEventHit[]>([]);
+  const [asOfDate, setAsOfDate] = useState("");
+  const [asOfTime, setAsOfTime] = useState("15:30");
+  const [minuteCode, setMinuteCode] = useState("");
+  const [minuteNote, setMinuteNote] = useState("");
+  const [minuteRows, setMinuteRows] = useState<{ hour: string; open: number | null; high: number | null; low: number | null; close: number | null }[]>([]);
+  const [minuteLoading, setMinuteLoading] = useState(false);
   const screenOnce = useRef(false);
   const cancelRef = useRef(false);
 
@@ -160,12 +162,12 @@ export function ScannerDesk({
 
   const loadNews = useCallback(async () => {
     try {
-      const res = await fetchMarketNewsFn({ data: {} });
+      const res = await fetchMarketNewsFn({ data: { asOf: asOfDate || undefined } });
       if (res.ok) setNews(res.items);
     } catch {
       /* public feed */
     }
-  }, []);
+  }, [asOfDate]);
 
   useEffect(() => {
     if (!initialSihwang) void loadSihwang();
@@ -287,6 +289,8 @@ export function ScannerDesk({
             codes: chunk.map((s) => s.code),
             tradingValueCodes: tvCodes,
             changeRateCodes: crCodes,
+            asOf: asOfDate || undefined,
+            time: asOfTime || undefined,
             seed: chunk.map((s) => ({
               code: s.code,
               name: s.name,
@@ -333,7 +337,9 @@ export function ScannerDesk({
     setAnalysisLoading(true);
     setAnalysisErr(null);
     try {
-      const res = await analyzeStockFn({ data: { ...creds, query: analysisQ.trim() } });
+      const res = await analyzeStockFn({
+        data: { ...creds, query: analysisQ.trim(), asOf: asOfDate || undefined, time: asOfTime || undefined },
+      });
       if (!res.ok) {
         setAnalysis(null);
         setMarketBrief(null);
@@ -396,6 +402,8 @@ export function ScannerDesk({
               changeRatePct: s.changeRatePct,
               volume: s.volume,
             })),
+            asOf: asOfDate || undefined,
+            time: asOfTime || undefined,
           },
         });
         if (!res.ok) {
@@ -423,7 +431,7 @@ export function ScannerDesk({
     } finally {
       setScreenLoading(false);
     }
-  }, [creds, scanSize]);
+  }, [creds, scanSize, asOfDate, asOfTime]);
 
   useEffect(() => {
     if ((nav !== "signs" && nav !== "dip") || !creds || screenOnce.current || screenLoading) return;
@@ -442,7 +450,7 @@ export function ScannerDesk({
     { id: "scan", label: "자동스캔", icon: LayoutDashboard },
     { id: "closing", label: "종가베팅", icon: Crosshair },
     { id: "analysis", label: "분석", icon: Search },
-    { id: "picks", label: "분석 STOCK", icon: Sparkles },
+    { id: "minute", label: "분봉", icon: Activity },
     { id: "signs", label: "사전징후", icon: AlertTriangle },
     { id: "dip", label: "저가매수", icon: TrendingDown },
     { id: "news", label: "시황·뉴스", icon: Newspaper },
@@ -557,7 +565,6 @@ export function ScannerDesk({
               <span className={nav === "scan" ? "font-medium text-fg" : ""}>테마보드</span>
               <span className={nav === "closing" ? "font-medium text-fg" : ""}>종가베팅</span>
               <span className={nav === "analysis" ? "font-medium text-fg" : ""}>분석</span>
-              <span className={nav === "picks" ? "font-medium text-fg" : ""}>분석 STOCK</span>
             </div>
             <div className="flex items-center gap-2">
               {creds ? <Badge tone="info">실전</Badge> : <Badge tone="warn">키 없음</Badge>}
@@ -577,6 +584,48 @@ export function ScannerDesk({
           </div>
 
           <main className="mx-auto flex max-w-6xl flex-col gap-5 px-4 py-5 pb-16">
+            {nav === "scan" || nav === "closing" || nav === "signs" || nav === "dip" || nav === "analysis" || nav === "minute" || nav === "news" ? (
+              <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-bg-elevated px-3 py-2">
+                <label className="flex flex-col gap-1 text-xs text-fg-subtle">
+                  {nav === "scan"
+                    ? "자동스캔"
+                    : nav === "closing"
+                      ? "종가베팅"
+                      : nav === "signs"
+                        ? "사전징후"
+                        : nav === "dip"
+                          ? "저가매수"
+                          : nav === "analysis"
+                            ? "분석"
+                            : nav === "news"
+                              ? "시황"
+                              : "분봉"}{" "}
+                  기준일
+                  <input
+                    type="date"
+                    value={asOfDate}
+                    onChange={(e) => setAsOfDate(e.target.value)}
+                    className="h-9 rounded-md border border-border bg-bg px-2 text-sm text-fg"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-fg-subtle">
+                  시각
+                  <input
+                    type="time"
+                    value={asOfTime}
+                    onChange={(e) => setAsOfTime(e.target.value)}
+                    className="h-9 rounded-md border border-border bg-bg px-2 text-sm text-fg"
+                  />
+                </label>
+                <p className="max-w-xl text-xs text-fg-muted">
+                  {nav === "news"
+                    ? "날짜를 비우면 최신 시황입니다. 날짜를 넣으면 그날을 포함한 이전 3주의 기사만 남깁니다. 네이버증권, 연합뉴스, 구글 뉴스를 함께 가져옵니다."
+                    : nav === "analysis" || nav === "minute"
+                    ? "날짜를 비우면 최신 시세입니다. 날짜를 넣으면 그날 일봉으로 조건을 계산하고, 시각까지 분봉을 찾습니다. 분봉이 없으면 시간봉, 그것도 없으면 일봉 종가입니다. 다음 거래일 시가·고가·저가·종가로 유효 여부를 적습니다."
+                    : "날짜를 비우면 최신 시세입니다. 이 메뉴는 종목이 많아 지정일 일봉 종가로 조건을 계산합니다. 다음 거래일 시가·고가·저가·종가가 기준가·손절 대비 어디인지 적습니다. 시각별 가격은 분석 또는 분봉에서 종목별로 확인하세요."}
+                </p>
+              </div>
+            ) : null}
             {uniError ? <p className="text-sm text-down">{uniError}</p> : null}
             {universe ? (
               <p className="text-xs text-fg-subtle">{universe.notes.join(" ")}</p>
@@ -629,6 +678,7 @@ export function ScannerDesk({
                         </CardTitle>
                         <CardDesc>
                           충족 {c.matchScore}/5 · {c.reasonSummary}
+                          {c.verifyNote ? ` · ${c.verifyNote}` : ""}
                         </CardDesc>
                       </CardHeader>
                       <p className="text-sm">
@@ -636,6 +686,11 @@ export function ScannerDesk({
                         {fmtWon(c.stopLoss)}
                       </p>
                       <p className="mt-1 text-xs text-fg-subtle">{c.targetBasis} · {c.stopLossBasis}</p>
+                      {(board.find((b) => b.code === c.stockCode)?.newsTitles ?? []).slice(0, 2).map((t) => (
+                        <p key={t} className="mt-1 text-xs text-fg-muted">
+                          {t}
+                        </p>
+                      ))}
                       <ul className="mt-3 grid gap-1 sm:grid-cols-2">
                         {[...c.conditions, ...c.qualityChecks].map((q) => (
                           <li key={q.label} className="flex gap-2 text-xs text-fg-muted">
@@ -657,47 +712,73 @@ export function ScannerDesk({
               </section>
             ) : null}
 
-            {nav === "picks" ? (
-              <SkillPicksPanel
-                creds={creds}
-                loading={analysisLoading}
-                error={analysisErr}
-                onRun={async (q) => {
-                  if (!creds || !q.trim()) return;
-                  setAnalysisLoading(true);
-                  setAnalysisErr(null);
-                  try {
-                    const res = await skillPicksFn({ data: { ...creds, query: q.trim() } });
-                    if (!res.ok) {
-                      setAnalysis(null);
-                      setMarketBrief(null);
-                      setSkillOut(null);
-                      setAnalysisErr(res.error);
-                      return;
-                    }
-                    setSkillOut({
-                      ok: true,
-                      heading: "분석 STOCK",
-                      query: res.query,
-                      mode: res.mode,
-                      workflow: res.workflow,
-                      body: res.body,
-                      cheap: res.cheap,
-                      report: res.report,
-                      market: res.market,
-                    });
-                    setMarketBrief(res.market ?? null);
-                    setAnalysis(res.report ?? null);
-                  } catch (e) {
-                    setAnalysisErr(e instanceof Error ? e.message : String(e));
-                  } finally {
-                    setAnalysisLoading(false);
-                  }
-                }}
-                result={skillOut}
-                report={analysis}
-                market={marketBrief}
-              />
+            {nav === "minute" ? (
+              <section className="flex flex-col gap-3">
+                <h2 className="text-lg font-semibold">분봉 검증</h2>
+                <p className="text-sm text-fg-muted">
+                  지정 날짜·시각까지의 분봉을 시간봉으로 묶습니다. 분봉이 없으면 그날 일봉 종가와 다음 거래일을 비교합니다.
+                </p>
+                <form
+                  className="flex flex-col gap-2 sm:flex-row"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!creds || !minuteCode.trim()) return;
+                    setMinuteLoading(true);
+                    setMinuteNote("");
+                    void minuteCheckFn({
+                      data: { ...creds, code: minuteCode.trim(), date: asOfDate || new Date().toISOString().slice(0, 10), time: asOfTime },
+                    })
+                      .then((res) => {
+                        if (!res.ok) {
+                          setMinuteRows([]);
+                          setMinuteNote(res.error);
+                          return;
+                        }
+                        setMinuteRows(res.hourly);
+                        setMinuteNote(`${res.note} 기준가 ${res.priceAt ?? "—"} · 분봉 ${res.bars}개. ${res.verify}`);
+                      })
+                      .catch((err) => setMinuteNote(err instanceof Error ? err.message : String(err)))
+                      .finally(() => setMinuteLoading(false));
+                  }}
+                >
+                  <Input
+                    value={minuteCode}
+                    onChange={(e) => setMinuteCode(e.target.value)}
+                    placeholder="005930"
+                    className="sm:max-w-xs"
+                  />
+                  <Button type="submit" disabled={minuteLoading || !creds}>
+                    {minuteLoading ? "조회 중…" : "분봉 확인"}
+                  </Button>
+                </form>
+                {minuteNote ? <p className="text-sm text-fg-muted">{minuteNote}</p> : null}
+                {minuteRows.length ? (
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full text-left text-sm">
+                      <thead className="text-xs text-fg-subtle">
+                        <tr>
+                          <th className="px-3 py-2">시간</th>
+                          <th className="px-3 py-2">시가</th>
+                          <th className="px-3 py-2">고가</th>
+                          <th className="px-3 py-2">저가</th>
+                          <th className="px-3 py-2">종가</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {minuteRows.map((r) => (
+                          <tr key={r.hour} className="border-t border-border">
+                            <td className="px-3 py-2">{r.hour}</td>
+                            <td className="px-3 py-2">{r.open ?? "—"}</td>
+                            <td className="px-3 py-2">{r.high ?? "—"}</td>
+                            <td className="px-3 py-2">{r.low ?? "—"}</td>
+                            <td className="px-3 py-2">{r.close ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+              </section>
             ) : null}
 
             {nav === "analysis" ? (
@@ -750,6 +831,7 @@ export function ScannerDesk({
             {nav === "news" ? (
               <section className="flex flex-col gap-4">
                 <h2 className="text-lg font-semibold">시황 · 주요 뉴스</h2>
+                <p className="text-xs text-fg-subtle">네이버증권, 연합뉴스, 구글 뉴스. 제목 아래는 받아 온 본문 일부입니다.</p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {(sihwang?.korean ?? []).map((t) => (
                     <Card key={t.symbol}>
@@ -762,14 +844,19 @@ export function ScannerDesk({
                   ))}
                 </div>
                 <ul className="flex flex-col gap-2">
-                  {news.slice(0, 12).map((n) => (
-                    <li key={n.title} className="rounded-lg bg-bg-elevated px-4 py-3 shadow-[var(--shadow-border)]">
-                      <p className="text-sm font-medium">{n.title}</p>
-                      <p className="text-[11px] text-fg-subtle">
-                        {n.source} · {n.pubDate}
-                      </p>
-                    </li>
-                  ))}
+                  {news.length ? (
+                    news.slice(0, 12).map((n) => (
+                      <li key={`${n.source ?? ""}-${n.title}`} className="rounded-lg bg-bg-elevated px-4 py-3 shadow-[var(--shadow-border)]">
+                        <p className="text-sm font-medium">{n.title}</p>
+                        {n.summary ? <p className="mt-1 text-xs leading-relaxed text-fg-muted">{n.summary}</p> : null}
+                        <p className="text-[11px] text-fg-subtle">
+                          {n.source} · {n.pubDate}
+                        </p>
+                      </li>
+                    ))
+                  ) : (
+                    <li className="text-sm text-fg-muted">시황 뉴스를 받지 못했습니다. 잠시 후 다시 열어 주세요.</li>
+                  )}
                 </ul>
               </section>
             ) : null}

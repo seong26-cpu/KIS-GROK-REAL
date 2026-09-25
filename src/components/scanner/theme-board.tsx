@@ -120,14 +120,19 @@ export function ThemeBoard({
 
       {headlines.length ? (
         <ul className="grid gap-2 md:grid-cols-2">
-          {headlines.slice(0, 4).map((n) => (
-            <li key={n.title} className="truncate rounded-lg bg-bg-elevated px-3 py-2 text-sm shadow-[var(--shadow-border)]">
-              <span className="text-fg-subtle">{n.source} · </span>
-              {n.title}
+          {headlines.slice(0, 6).map((n) => (
+            <li key={`${n.source ?? ""}-${n.title}`} className="rounded-lg bg-bg-elevated px-3 py-2 text-sm shadow-[var(--shadow-border)]">
+              <p>
+                <span className="text-fg-subtle">{n.source ?? "뉴스"} · </span>
+                {n.title}
+              </p>
+              {n.summary ? <p className="mt-1 line-clamp-2 text-xs text-fg-muted">{n.summary}</p> : null}
             </li>
           ))}
         </ul>
-      ) : null}
+      ) : (
+        <p className="text-xs text-fg-subtle">시황 뉴스를 아직 받지 못했습니다. 네이버증권·연합뉴스·구글 뉴스를 다시 불러옵니다.</p>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {cards.map((card) => (
@@ -226,6 +231,7 @@ function StockDetail({ stock }: { stock: BoardStock }) {
       <DialogDesc>
         {stock.themeName} · {fmtPct(stock.changeRatePct)} · 대금 {fmtEok(stock.tradingValueEok)}억
       </DialogDesc>
+      {stock.verifyNote ? <p className="mt-2 text-xs text-fg">{stock.verifyNote}</p> : null}
 
       <dl className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
         <Stat label="현재가" value={stock.currentPrice != null ? `${stock.currentPrice.toLocaleString("ko-KR")}원` : "미확보"} />

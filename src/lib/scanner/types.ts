@@ -6,6 +6,7 @@ export type NewsItem = {
   source?: string;
   code?: string;
   link?: string;
+  summary?: string;
 };
 
 export type CheckItem = {
@@ -94,6 +95,7 @@ export type ClosingBetCandidate = {
   riskNotes: string[];
   matchScore: number;
   rankSources: string[];
+  verifyNote?: string;
 };
 
 export type CaseVerdict = {
@@ -141,6 +143,7 @@ export type BoardStock = {
   stopLoss: number | null;
   bars: { date: string; close: number; volume: number | null }[];
   supply: { date: string; foreign: number | null; inst: number | null; individual: number | null }[];
+  verifyNote?: string;
 };
 
 export type ThemeCard = {
@@ -290,7 +293,7 @@ export type MarketBrief = {
   breadth: { label: string; value: string }[];
   sectors: { name: string; names: string[] }[];
   leaders: { code: string; name: string; price: string; change: string }[];
-  news: { title: string; source: string; date: string }[];
+  news: { title: string; source: string; date: string; summary?: string }[];
   outlook: string;
   disclaimer: string;
 };

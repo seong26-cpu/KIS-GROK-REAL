@@ -163,11 +163,11 @@ export const fetchSihwangFn = createServerFn({ method: "POST" })
 export type NewsResult = { ok: true; items: NewsItem[]; fetchedAt: string } | { ok: false; error: string };
 
 export const fetchMarketNewsFn = createServerFn({ method: "POST" })
-  .validator((_d: unknown) => ({}))
-  .handler(async (): Promise<NewsResult> => {
+  .validator((d: unknown) => z.object({ asOf: z.string().optional() }).parse(d ?? {}))
+  .handler(async ({ data }): Promise<NewsResult> => {
     try {
       const { fetchMarketNews } = await import("@/lib/market/news.server");
-      const items = (await fetchMarketNews()) ?? [];
+      const items = (await fetchMarketNews(data.asOf)) ?? [];
       return { ok: true, items, fetchedAt: new Date().toISOString() };
     } catch (e) {
       return { ok: false, error: errMsg(e) };
@@ -193,6 +193,8 @@ const evaluateInput = credsSchema.extend({
   tradingValueCodes: z.array(z.string()),
   changeRateCodes: z.array(z.string()),
   seed: z.array(seedSchema).optional(),
+  asOf: z.string().optional(),
+  time: z.string().optional(),
 });
 
 export type EvaluateResult =
@@ -239,7 +241,9 @@ export const evaluateBatch = createServerFn({ method: "POST" })
     for (const code of data.codes) {
       const seed = seedByCode.get(code);
       try {
-        const snap = await buildSnapshot(client, code, seed);
+        const snap = await buildSnapshot(client, code, seed, data.asOf);
+        const { applyAsOf } = await import("@/lib/scanner/asof");
+        const asof = applyAsOf(snap, data.asOf);
         if (snap.currentPrice == null) {
           errors.push(`${code} 시세 미확보`);
           continue;
@@ -261,7 +265,20 @@ export const evaluateBatch = createServerFn({ method: "POST" })
           evaluated.push(v);
           if (v.verdict === "적극매수" || v.verdict === "매수") caseVerdicts.push(v);
         }
-        board.push(snapshotToBoard(snap, evaluated, closingRow, seed?.leaderScore ?? 0));
+        const row = snapshotToBoard(snap, evaluated, closingRow, seed?.leaderScore ?? 0);
+        const clock = data.time ? `요청 시각 ${data.time}은 종목이 많아 일봉 종가로 검증합니다.` : "";
+        const stopBit =
+          asof.next && closingRow.stopLoss != null && asof.next.low != null
+            ? asof.next.low < closingRow.stopLoss
+              ? "다음날 저가가 손절가 아래입니다."
+              : "다음날 저가가 손절가 위입니다."
+            : "";
+        const verify = [asof.text, clock, stopBit].filter(Boolean).join(" ");
+        if (verify) {
+          row.verifyNote = verify;
+          closingRow.verifyNote = verify;
+        }
+        board.push(row);
       } catch (e) {
         errors.push(`${code} 평가 오류: ${errMsg(e)}`);
       }
@@ -276,7 +293,9 @@ function snapshotToBoard(
   closing: ClosingBetCandidate,
   leaderScore: number,
 ): BoardStock {
-  const newsTitles = (snap.newsItems ?? []).map((n) => n.title).filter(Boolean);
+  const newsTitles = (snap.newsItems ?? [])
+    .map((n) => `${n.source ? `${n.source} · ` : ""}${n.title}${n.summary ? ` — ${n.summary.slice(0, 90)}` : ""}`)
+    .filter(Boolean);
   const theme = classifyTheme({ name: snap.stockName ?? snap.stockCode, newsTitles });
   const close20 = toNum(snap.dailyPrices[19]?.stck_clpr);
   const ret20Pct =
@@ -337,7 +356,66 @@ function snapshotToBoard(
 
 const analysisInput = credsSchema.extend({
   query: z.string().min(1).max(40),
+  asOf: z.string().optional(),
+  time: z.string().optional(),
 });
+
+export const minuteCheckFn = createServerFn({ method: "POST" })
+  .validator((d: unknown) =>
+    credsSchema
+      .extend({
+        code: z.string().min(1).max(12),
+        date: z.string().min(8),
+        time: z.string().optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { KisClient } = await import("@/lib/kis/client.server");
+    const { toNum } = await import("@/lib/scanner/indicators");
+    const { splitDaily, verifyLine, ymdOnly, readMinuteRows, toHourly, priceThrough } = await import("@/lib/scanner/asof");
+    const code = /^\d{1,6}$/.test(data.code.trim()) ? data.code.trim().padStart(6, "0") : "";
+    if (!code) return { ok: false as const, error: "6자리 종목코드가 필요합니다." };
+    const ymd = ymdOnly(data.date);
+    const hhmm = (data.time || "15:30").replace(/\D/g, "").padEnd(6, "0").slice(0, 6);
+    const client = new KisClient(creds(data));
+    try {
+      await client.ensureToken();
+      let rows: Record<string, unknown>[] = [];
+      let note = "분봉";
+      try {
+        rows = await client.getMinuteBars(code, ymd, hhmm);
+      } catch (e) {
+        note = `분봉 조회 실패(${e instanceof Error ? e.message : String(e)}). 일봉으로 대체합니다.`;
+      }
+      const minutes = readMinuteRows(rows);
+      const hourly = toHourly(minutes);
+      const at = priceThrough(minutes, hhmm);
+      const daily = await client.getDailyPrices(code, 120);
+      const { known, next } = splitDaily(daily, ymd);
+      const base = toNum(known[0]?.stck_clpr);
+      let priceAt = at.price;
+      if (priceAt == null) {
+        priceAt = base;
+        note = minutes.length
+          ? `${note} 요청 시각 이전 봉이 없어 일봉 종가를 기준가로 씁니다.`
+          : `${note} 분봉·시간봉이 비어 기준 가격은 일봉 종가입니다.`;
+      } else {
+        note = `${note} ${at.via} 기준. 아래 표는 분봉을 시간으로 묶은 값입니다.`;
+      }
+      return {
+        ok: true as const,
+        code,
+        bars: minutes.length,
+        hourly: hourly.slice(-8),
+        priceAt,
+        note,
+        verify: verifyLine(priceAt ?? base, next, null),
+      };
+    } catch (e) {
+      return { ok: false as const, error: errMsg(e) };
+    }
+  });
 
 export type AnalysisResult =
   | { ok: true; report: AnalysisReport; market?: undefined }
@@ -352,7 +430,7 @@ export const analyzeStockFn = createServerFn({ method: "POST" })
     const market = marketQuery(q);
     if (market) {
       try {
-        return { ok: true, market: await buildMarketBrief(market) };
+        return { ok: true, market: await buildMarketBrief(market, data.asOf) };
       } catch (e) {
         return { ok: false, error: errMsg(e) };
       }
@@ -382,7 +460,27 @@ export const analyzeStockFn = createServerFn({ method: "POST" })
     }
     try {
       await client.ensureToken();
-      const snap = await buildSnapshot(client, code);
+      const snap = await buildSnapshot(client, code, undefined, data.asOf);
+      const { applyAsOf, ymdOnly, readMinuteRows, priceThrough } = await import("@/lib/scanner/asof");
+      const { ymdKst } = await import("@/lib/scanner/indicators");
+      const asof = applyAsOf(snap, data.asOf);
+      let clock = "";
+      const minuteDay = ymdOnly(data.asOf) || (data.time ? ymdKst(0) : "");
+      if (data.time && minuteDay) {
+        try {
+          const rows = await client.getMinuteBars(code, minuteDay, data.time.replace(/\D/g, "").padEnd(6, "0").slice(0, 6));
+          const at = priceThrough(readMinuteRows(rows), data.time);
+          if (at.price != null) {
+            snap.currentPrice = at.price;
+            if (snap.prevClose) snap.changeRatePct = ((at.price - snap.prevClose) / snap.prevClose) * 100;
+            clock = `요청 시각 ${data.time} ${at.via} 가격 ${at.price.toLocaleString("ko-KR")}.`;
+          } else {
+            clock = `요청 시각 ${data.time} 분봉·시간봉이 비어 일봉 종가를 기준가로 씁니다.`;
+          }
+        } catch (e) {
+          clock = `분봉 조회 실패(${e instanceof Error ? e.message : String(e)}). 일봉 종가를 기준가로 씁니다.`;
+        }
+      }
       let sihwang: SihwangSnapshot | null = null;
       try {
         const { fetchSihwang } = await import("@/lib/market/sihwang.server");
@@ -390,7 +488,9 @@ export const analyzeStockFn = createServerFn({ method: "POST" })
       } catch {
         sihwang = null;
       }
-      const report = await buildAnalysis(snap, sihwang);
+      const report = await buildAnalysis(snap, sihwang, data.asOf);
+      const verify = [clock, asof.text].filter(Boolean).join(" ");
+      if (verify) report.summary = `${verify} ${report.summary ?? ""}`.trim();
       return { ok: true, report };
     } catch (e) {
       return { ok: false, error: errMsg(e) };
@@ -406,7 +506,15 @@ const screenItem = z.object({
 });
 
 export const screenChunkFn = createServerFn({ method: "POST" })
-  .validator((d: unknown) => credsSchema.extend({ items: z.array(screenItem).min(1).max(6) }).parse(d))
+  .validator((d: unknown) =>
+    credsSchema
+      .extend({
+        asOf: z.string().optional(),
+        time: z.string().optional(),
+        items: z.array(screenItem).min(1).max(6),
+      })
+      .parse(d),
+  )
   .handler(async ({ data }) => {
     const { KisClient } = await import("@/lib/kis/client.server");
     const { toNum } = await import("@/lib/scanner/indicators");
@@ -428,11 +536,18 @@ export const screenChunkFn = createServerFn({ method: "POST" })
           const dart = await fetchDartFacts(item.code, price);
           let news = null;
           try {
-            news = await fetchStockNews(item.code, item.name);
+            news = await fetchStockNews(item.code, item.name, data.asOf);
           } catch {
             news = null;
           }
           const mergedNews = [...(dart?.titles ?? []), ...(news ?? [])];
+          const { applyAsOf, ymdOnly } = await import("@/lib/scanner/asof");
+          const asOfYmd = ymdOnly(data.asOf);
+          const visibleNews = mergedNews.filter((n) => {
+            if (!asOfYmd) return true;
+            const d = n.pubDate.replace(/\D/g, "").slice(0, 8);
+            return d.length < 8 || d <= asOfYmd;
+          });
           const prev = toNum(daily[1]?.stck_clpr);
           const change =
             item.changeRatePct ??
@@ -470,19 +585,25 @@ export const screenChunkFn = createServerFn({ method: "POST" })
             investorRows: [],
             foreignNetBuyAmount1d: null,
             instNetBuyAmount1d: null,
-            newsItems: mergedNews,
+            newsItems: visibleNews,
             errors: [],
           };
-          signs.push(...detectSigns(env));
+          const asof = applyAsOf(env, data.asOf);
+          const clock = data.time ? `요청 시각 ${data.time}은 종목이 많아 일봉 종가로 검증합니다.` : "";
+          const verify = [asof.text, clock].filter(Boolean).join(" ");
+          signs.push(...detectSigns(env).map((s) => ({ ...s, verifyNote: verify || undefined })));
           const judged = classifyDip(env);
           reasons.push(judged.reason);
           if (judged.hit) {
+            judged.hit.news = visibleNews
+              .slice(0, 4)
+              .map((n) => `${n.source ?? ""} ${n.title}${n.summary ? ` — ${n.summary.slice(0, 120)}` : ""}`.trim());
             if (dart) {
               judged.hit.missing = judged.hit.missing.filter((m) => !dart.filled.includes(m));
               judged.hit.dartLines = dart.lines;
-              judged.hit.news = mergedNews.slice(0, 4).map((n) => `${n.pubDate} ${n.title}`.trim());
               if (dart.note) judged.hit.note = dart.note;
             }
+            judged.hit.verifyNote = verify || undefined;
             dips.push(judged.hit);
           }
         } catch (e) {
