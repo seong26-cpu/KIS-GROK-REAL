@@ -252,6 +252,10 @@ export const evaluateBatch = createServerFn({ method: "POST" })
           excludedPenny += 1;
           continue;
         }
+        if ((snap.tradingValueToday == null || snap.tradingValueToday <= 0) && seed?.tradingValue != null && seed.tradingValue > 0) {
+          snap.tradingValueToday = seed.tradingValue;
+          snap.tradingValueIsEstimated = seed.tradingValueEstimated ?? snap.tradingValueIsEstimated;
+        }
         const closingRow = evaluateClosingBetCandidate(snap, {
           isTradingValueTop: tvSet.has(code),
           isChangeRateTop: crSet.has(code),
@@ -594,11 +598,14 @@ export const screenChunkFn = createServerFn({ method: "POST" })
           const mergedNews = [...(dart?.titles ?? []), ...(news ?? [])];
           const { applyAsOf, ymdOnly } = await import("@/lib/scanner/asof");
           const asOfYmd = ymdOnly(data.asOf);
+          const { ymdKst } = await import("@/lib/scanner/indicators");
+          const signDay = asOfYmd || ymdKst(0);
           const visibleNews = mergedNews.filter((n) => {
             if (!asOfYmd) return true;
             const d = n.pubDate.replace(/\D/g, "").slice(0, 8);
             return d.length < 8 || d <= asOfYmd;
           });
+          const signNews = mergedNews.filter((n) => n.pubDate.replace(/\D/g, "").slice(0, 8) === signDay);
           const prev = toNum(daily[1]?.stck_clpr);
           const change =
             item.changeRatePct ??
@@ -642,7 +649,19 @@ export const screenChunkFn = createServerFn({ method: "POST" })
           const asof = applyAsOf(env, data.asOf);
           const clock = data.time ? `요청 시각 ${data.time}은 종목이 많아 일봉 종가로 검증합니다.` : "";
           const verify = [asof.text, clock].filter(Boolean).join(" ");
-          signs.push(...detectSigns(env).map((s) => ({ ...s, verifyNote: verify || undefined })));
+          const signEnv = { ...env, newsItems: signNews };
+          signs.push(
+            ...detectSigns(signEnv)
+              .filter((s) => s.kind === "공시" || /일봉|거래량/.test(s.evidence) || signNews.length > 0)
+              .map((s) => ({
+                ...s,
+                detail:
+                  s.kind === "급등" || s.kind === "급락"
+                    ? `${s.detail} 기준일 ${signDay} 당일 이벤트만.`
+                    : s.detail,
+                verifyNote: verify || undefined,
+              })),
+          );
           const judged = classifyDip(env);
           reasons.push(judged.reason);
           if (judged.hit) {

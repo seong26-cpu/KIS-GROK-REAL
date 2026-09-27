@@ -58,7 +58,7 @@ import type {
   TokenStatus,
   UniverseSnapshot,
 } from "@/lib/scanner/types";
-import { cn, fmtPct, fmtWon } from "@/lib/utils";
+import { cn, downloadCsv, fmtPct, fmtWon } from "@/lib/utils";
 
 type NavId = "scan" | "closing" | "analysis" | "news" | "keys" | "signs" | "dip" | "minute";
 
@@ -128,6 +128,152 @@ export function ScannerDesk({
   const [minuteLoading, setMinuteLoading] = useState(false);
   const screenOnce = useRef(false);
   const cancelRef = useRef(false);
+
+  const exportCsv = (kind: "scan" | "closing" | "signs" | "dip" | "analysis" | "news" | "minute" | "universe") => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (kind === "universe" && universe) {
+      downloadCsv(
+        `유니버스_${stamp}.csv`,
+        ["코드", "종목", "A", "B", "C", "전일순위", "5일순위", "당일순위", "현재가", "등락%", "거래대금", "근사", "시총억원", "주도주점수"],
+        universe.selected.map((s) => [
+          s.code,
+          s.name,
+          s.inA ? "Y" : "",
+          s.inB ? "Y" : "",
+          s.inC ? "Y" : "",
+          s.prevTvRank,
+          s.avg5TvRank,
+          s.todayTvRank,
+          s.price,
+          s.changeRatePct,
+          s.tradingValue,
+          s.tradingValueEstimated ? "Y" : "",
+          s.marketCapEok,
+          s.leaderScore,
+        ]),
+      );
+      return;
+    }
+    if (kind === "scan") {
+      downloadCsv(
+        `자동스캔_${stamp}.csv`,
+        ["코드", "종목", "테마", "현재가", "등락%", "거래대금억원", "20일수익률%", "고점대비%", "매수근거", "목표", "손절"],
+        board.map((s) => [
+          s.code,
+          s.name,
+          s.themeName,
+          s.currentPrice,
+          s.changeRatePct,
+          s.tradingValueEok,
+          s.ret20Pct,
+          s.highVsPeakPct,
+          s.cases.map((c) => `${c.caseTitle}:${c.verdict}`).join(" | "),
+          s.targetPrice,
+          s.stopLoss,
+        ]),
+      );
+      return;
+    }
+    if (kind === "closing") {
+      downloadCsv(
+        `종가배팅_${stamp}.csv`,
+        ["코드", "종목", "현재가", "등락%", "거래대금", "충족점수", "근거", "매수목표", "손절"],
+        closing.map((c) => [
+          c.stockCode,
+          c.stockName,
+          c.currentPrice,
+          c.changeRatePct,
+          c.tradingValueToday,
+          c.matchScore,
+          c.reasonSummary,
+          c.targetPrice,
+          c.stopLoss,
+        ]),
+      );
+      return;
+    }
+    if (kind === "signs") {
+      downloadCsv(
+        `사전징후_${stamp}.csv`,
+        ["코드", "종목", "구분", "제목", "근거", "현재가", "매수", "손절", "익절", "대기", "영향"],
+        signs.map((s) => [s.code, s.name, s.kind, s.title, s.detail, s.price, s.buy, s.stop, s.take, s.wait, s.impact]),
+      );
+      return;
+    }
+    if (kind === "dip") {
+      const setupRows = setups.map((s) => [
+        "겹침",
+        s.code,
+        s.name,
+        s.theme,
+        s.title,
+        s.detail,
+        s.price,
+        s.buy,
+        s.stop,
+        s.take,
+        s.wait,
+        s.score,
+      ]);
+      const dipRows = dips.map((s) => [
+        "저가",
+        s.code,
+        s.name,
+        s.theme,
+        `우선${s.priority}`,
+        s.note,
+        s.price,
+        s.step1,
+        s.stop,
+        s.step3,
+        "",
+        "",
+      ]);
+      const eventRows = events.map((s) => ["이벤트", s.code, s.name, s.theme, s.category, s.title, "", "", "", "", s.filedOn, ""]);
+      downloadCsv(
+        `저가매수_${stamp}.csv`,
+        ["종류", "코드", "종목", "테마", "제목", "근거", "현재가", "매수", "손절", "익절", "대기", "점수"],
+        [...setupRows, ...dipRows, ...eventRows],
+      );
+      return;
+    }
+    if (kind === "analysis") {
+      const reports = skillResult?.reports?.length ? skillResult.reports : skillResult?.report ? [skillResult.report] : [];
+      const cheap = skillResult?.cheap ?? [];
+      const leaders = skillResult?.market?.leaders ?? [];
+      downloadCsv(
+        `분석STOCK_${stamp}.csv`,
+        ["종류", "코드", "종목", "현재가", "등락", "요약"],
+        [
+          ...reports.map((r) => ["분석", r.stockCode, r.stockName, r.currentPrice, r.changeRatePct, r.summary ?? r.marketReason]),
+          ...cheap.map((r) => ["저가", r.code, r.name, r.price, r.changePct, r.note]),
+          ...leaders.map((r) => ["시황주도", r.code, r.name, r.price, r.change, ""]),
+          ...(marketBrief
+            ? [["시황", marketBrief.market, "", marketBrief.price, marketBrief.changePct, marketBrief.outlook]]
+            : []),
+        ],
+      );
+      return;
+    }
+    if (kind === "news") {
+      const tape = [...(sihwang?.korean ?? []), ...(sihwang?.global ?? [])].map((t) => [
+        "지수",
+        t.symbol,
+        t.name,
+        t.price,
+        t.changeRatePct,
+        t.source,
+      ]);
+      const headlines = news.map((n) => ["뉴스", "", n.title, "", n.pubDate, `${n.source ?? ""} ${n.summary ?? ""}`.trim()]);
+      downloadCsv(`시황_${stamp}.csv`, ["종류", "코드", "이름", "가격", "등락또는시각", "내용"], [...tape, ...headlines]);
+      return;
+    }
+    downloadCsv(
+      `분봉_${stamp}.csv`,
+      ["시간", "시가", "고가", "저가", "종가", "메모"],
+      minuteRows.map((r) => [r.hour, r.open, r.high, r.low, r.close, minuteNote]),
+    );
+  };
 
   useEffect(() => {
     let stop = false;
@@ -695,7 +841,13 @@ export function ScannerDesk({
             ) : null}
             {uniError ? <p className="text-sm text-down">{uniError}</p> : null}
             {universe ? (
-              <p className="text-xs text-fg-subtle">{universe.notes.join(" ")}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs text-fg-subtle">{universe.notes.join(" ")}</p>
+                <Button type="button" variant="secondary" className="h-8 px-2 text-xs" onClick={() => exportCsv("universe")}>
+                  <Download className="size-3.5" />
+                  유니버스 CSV
+                </Button>
+              </div>
             ) : creds ? (
               <p className="text-xs text-fg-subtle">
                 유니버스: 전일대금 상위200 ∪ 5일평균대금 상위200 ∪ 당일대금 상위50 · ETF·관리·신규상장 제외
@@ -727,6 +879,10 @@ export function ScannerDesk({
                   headlines={news}
                   onOpen={(stock) => openStock(stock.code, stock.name, stock)}
                 />
+                <Button type="button" variant="secondary" className="h-8 self-start px-2 text-xs" disabled={!board.length} onClick={() => exportCsv("scan")}>
+                  <Download className="size-3.5" />
+                  자동스캔 CSV
+                </Button>
               </>
             ) : null}
 
@@ -734,8 +890,12 @@ export function ScannerDesk({
               <section className="flex flex-col gap-3">
                 <h2 className="text-lg font-semibold">종가베팅 후보</h2>
                 <p className="text-sm text-fg-muted">
-                  유동성 하한 시총 1,000억원 · 섹터 동조 · 재료 지속성. 충족 조건과 품질검증을 펼칩니다.
+                  15시 종가 기준 거래대금이 큰 순서입니다. 조건 점수만으로 거래대금 상위를 밀어내지 않습니다. 충족 조건은 펼쳐서 확인합니다.
                 </p>
+                <Button type="button" variant="secondary" className="h-8 self-start px-2 text-xs" disabled={!closing.length} onClick={() => exportCsv("closing")}>
+                  <Download className="size-3.5" />
+                  CSV
+                </Button>
                 {!closing.length ? (
                   <Card>
                     <p className="text-sm text-fg-muted">자동스캔을 실행하면 A∪B∪C 종목의 종가베팅 통과 여부가 여기에 모입니다.</p>
@@ -838,6 +998,10 @@ export function ScannerDesk({
                   </Button>
                 </form>
                 {minuteNote ? <p className="text-sm text-fg-muted">{minuteNote}</p> : null}
+                <Button type="button" variant="secondary" className="h-8 self-start px-2 text-xs" disabled={!minuteRows.length} onClick={() => exportCsv("minute")}>
+                  <Download className="size-3.5" />
+                  CSV
+                </Button>
                 {minuteRows.length ? (
                   <div className="overflow-x-auto rounded-lg border border-border">
                     <table className="w-full text-left text-sm">
@@ -894,12 +1058,26 @@ export function ScannerDesk({
                 {nav === "dip" ? (
                   <DipPanel dips={dips} events={events} setups={setups} note={screenNote} skipped={screenSkip} onPick={openStock} />
                 ) : null}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="h-8 self-start px-2 text-xs"
+                  disabled={nav === "signs" ? !signs.length : !setups.length && !dips.length && !events.length}
+                  onClick={() => exportCsv(nav === "signs" ? "signs" : "dip")}
+                >
+                  <Download className="size-3.5" />
+                  CSV
+                </Button>
               </section>
             ) : null}
 
             {nav === "news" ? (
               <section className="flex flex-col gap-4">
                 <h2 className="text-lg font-semibold">시황 · 주요 뉴스</h2>
+                <Button type="button" variant="secondary" className="h-8 self-start px-2 text-xs" disabled={!news.length && !(sihwang?.korean.length)} onClick={() => exportCsv("news")}>
+                  <Download className="size-3.5" />
+                  CSV
+                </Button>
                 <p className="text-xs text-fg-subtle">네이버증권, 연합뉴스, 구글 뉴스. 제목 아래는 받아 온 본문 일부입니다.</p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {(sihwang?.korean ?? []).map((t) => (

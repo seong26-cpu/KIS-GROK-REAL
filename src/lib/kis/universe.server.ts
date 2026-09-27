@@ -164,6 +164,154 @@ export function scoreLeader(opts: {
   return s;
 }
 
+type NaverQuote = {
+  code: string;
+  name: string;
+  price: number | null;
+  changeRatePct: number | null;
+  volume: number | null;
+  tradingValue: number | null;
+  marketCapEok: number | null;
+  listedDate: string;
+  managed: boolean;
+};
+
+const NAVER_ORDERS = ["priceTop", "marketSum", "up", "upperQuantTop"] as const;
+const barCache = new Map<string, { until: number; bars: { ymd: string; close: number; volume: number }[] }>();
+
+async function fetchNaverOrder(order: (typeof NAVER_ORDERS)[number]): Promise<NaverQuote[]> {
+  const url = `https://stock.naver.com/api/domestic/market/stock/default?tradeType=KRX&marketType=ALL&orderType=${order}&startIdx=0&pageSize=100`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const resp = await fetch(url, {
+      headers: { "user-agent": "Mozilla/5.0", referer: "https://stock.naver.com/" },
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) return [];
+    const rows = (await resp.json()) as Record<string, unknown>[];
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .map((r) => {
+        const code = String(r.itemcode ?? "").replace(/^A/, "");
+        if (!/^\d{6}$/.test(code)) return null;
+        const cap = num(r.marketSum);
+        return {
+          code,
+          name: String(r.itemname ?? "").trim(),
+          price: num(r.nowPrice),
+          changeRatePct: num(r.prevChangeRate),
+          volume: num(r.tradeVolume),
+          tradingValue: num(r.tradeAmount),
+          marketCapEok: cap != null ? cap / 100_000_000 : null,
+          listedDate: String(r.listedDate ?? ""),
+          managed: String(r.manageStatusGb ?? "0") !== "0",
+        } satisfies NaverQuote;
+      })
+      .filter((r): r is NaverQuote => r != null && Boolean(r.name));
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function fetchNaverPool(): Promise<NaverQuote[]> {
+  const pages = await Promise.all(NAVER_ORDERS.map((order) => fetchNaverOrder(order)));
+  const map = new Map<string, NaverQuote>();
+  for (const row of pages.flat()) {
+    const prev = map.get(row.code);
+    if (!prev || (row.tradingValue ?? 0) > (prev.tradingValue ?? 0)) map.set(row.code, row);
+  }
+  return [...map.values()];
+}
+
+async function fetchRecentBars(code: string): Promise<{ ymd: string; close: number; volume: number }[]> {
+  const hit = barCache.get(code);
+  if (hit && hit.until > Date.now()) return hit.bars;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 7000);
+  try {
+    const resp = await fetch(`https://m.stock.naver.com/api/stock/${code}/price?pageSize=7&page=1`, {
+      headers: { "user-agent": "Mozilla/5.0" },
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) return [];
+    const rows = (await resp.json()) as Record<string, unknown>[];
+    const bars = (Array.isArray(rows) ? rows : [])
+      .map((r) => ({
+        ymd: String(r.localTradedAt ?? "").replace(/\D/g, "").slice(0, 8),
+        close: num(r.closePrice) ?? 0,
+        volume: num(r.accumulatedTradingVolume) ?? 0,
+      }))
+      .filter((r) => r.ymd.length === 8 && r.close > 0 && r.volume > 0);
+    barCache.set(code, { until: Date.now() + 30 * 60_000, bars });
+    return bars;
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function mapBars(codes: string[]): Promise<Map<string, { ymd: string; close: number; volume: number }[]>> {
+  const out = new Map<string, { ymd: string; close: number; volume: number }[]>();
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < codes.length) {
+      const code = codes[cursor];
+      cursor += 1;
+      if (!code) continue;
+      out.set(code, await fetchRecentBars(code));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(12, codes.length) }, () => worker()));
+  return out;
+}
+
+function asRanked(
+  row: { code: string; name: string; price: number | null; changeRatePct: number | null; volume: number | null; tradingValue: number | null },
+  rank: number,
+  estimated: boolean,
+): RankedStock {
+  return {
+    code: row.code,
+    name: row.name,
+    rank,
+    price: row.price,
+    changeRatePct: row.changeRatePct,
+    volume: row.volume,
+    tradingValue: row.tradingValue,
+    tradingValueEstimated: estimated,
+    source: "trading_value",
+  };
+}
+
+function topByValue(
+  rows: { code: string; name: string; price: number | null; changeRatePct: number | null; volume: number | null; tradingValue: number | null }[],
+  top: number,
+  estimated: boolean,
+): RankedStock[] {
+  return [...rows]
+    .filter((r) => (r.tradingValue ?? 0) > 0)
+    .sort((a, b) => (b.tradingValue ?? 0) - (a.tradingValue ?? 0) || a.code.localeCompare(b.code))
+    .slice(0, top)
+    .map((r, i) => asRanked(r, i + 1, estimated || r.tradingValue == null));
+}
+
+/** 주말·휴장으로 빈 날이 끼면 직전 평일이 아니라 실제로 시세가 있는 세션을 찾는다. */
+function recentSessionYmds(count: number, barsByCode: Map<string, { ymd: string }[]>): string[] {
+  const counts = new Map<string, number>();
+  for (const bars of barsByCode.values()) {
+    for (const bar of bars) counts.set(bar.ymd, (counts.get(bar.ymd) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, n]) => n >= 8)
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .slice(0, count)
+    .map(([ymd]) => ymd);
+}
+
 export async function buildUniverse(
   client: KisClient,
   indexChangePct: number | null,
@@ -224,17 +372,6 @@ export async function buildUniverse(
   const ydayRowsF = ydayRows.filter((r) => !drop(r.code, r.name));
   const chgRowsF = chgRows.filter((r) => !drop(r.code, r.name));
 
-  const todayTv = mergeRanked(
-    rankByTv(krxTodayF, Math.max(todayTop, 80)),
-    todayRowsF.map((r) => toRanked(r, "trading_value")),
-    todayTop,
-  );
-  const prevTv = mergeRanked(
-    rankByTv(krxYdayF.length ? krxYdayF : krxTodayF, PREV_TV_TOP),
-    ydayRowsF.map((r) => toRanked(r, "trading_value")),
-    PREV_TV_TOP,
-  );
-
   const avgMap = new Map<string, number>();
   for (const day of [krxToday, krxYday, krx2, krx3, krx4]) {
     for (const r of day) {
@@ -266,11 +403,98 @@ export async function buildUniverse(
     .sort((a, b) => (b.avgTradingValue ?? b.tradingValue ?? 0) - (a.avgTradingValue ?? a.tradingValue ?? 0))
     .map((r, i) => ({ ...toRanked(r, "trading_value"), rank: i + 1, tradingValue: r.avgTradingValue ?? r.tradingValue }));
 
-  const avg5Tv = mergeRanked(avgFromKrx, avgFromKis, AVG5_TV_TOP);
+  const todayTvKrx = mergeRanked(
+    rankByTv(krxTodayF, Math.max(todayTop, 80)),
+    todayRowsF.map((r) => toRanked(r, "trading_value")),
+    todayTop,
+  );
+  const prevTvKrx = mergeRanked(
+    rankByTv(krxYdayF, PREV_TV_TOP),
+    ydayRowsF.map((r) => toRanked(r, "trading_value")),
+    PREV_TV_TOP,
+  );
+  const krxWide = todayTvKrx.length >= 80 && prevTvKrx.length >= 80;
+
+  let todayTv = todayTvKrx;
+  let prevTv = prevTvKrx;
+  let avg5Tv = avgFromKrx.length >= 40 ? mergeRanked(avgFromKrx, avgFromKis, AVG5_TV_TOP) : mergeRanked(avgFromKis, avgFromKrx, AVG5_TV_TOP);
+  let naverCap = new Map<string, number>();
+  let valueEstimated = false;
+  let baseYmd = "";
+
+  const kisShort = Math.max(todayTv.length, prevTv.length, avg5Tv.length) < 80;
+  if (!krxWide && kisShort) {
+    const poolNaver = (await fetchNaverPool()).filter((r) => !drop(r.code, r.name) && !r.managed);
+    if (poolNaver.length) {
+      sources.push(`네이버 거래대금·시총·상승·거래량 합집합 ${poolNaver.length}종목`);
+      naverCap = new Map(poolNaver.filter((r) => r.marketCapEok != null).map((r) => [r.code, r.marketCapEok!]));
+      const bars = await mapBars(poolNaver.map((r) => r.code));
+      const sessions = recentSessionYmds(6, bars);
+      baseYmd = sessions[0] ?? "";
+      const prevYmd = sessions[1] ?? "";
+      const nameOf = new Map(poolNaver.map((r) => [r.code, r.name]));
+      const quoteOf = new Map(poolNaver.map((r) => [r.code, r]));
+      const approx = (code: string, ymd: string) => {
+        const bar = (bars.get(code) ?? []).find((b) => b.ymd === ymd);
+        if (!bar) return null;
+        return bar.close * bar.volume;
+      };
+      const cRows = poolNaver.map((r) => ({
+        code: r.code,
+        name: r.name,
+        price: r.price,
+        changeRatePct: r.changeRatePct,
+        volume: r.volume,
+        tradingValue: r.tradingValue,
+      }));
+      const aRows = poolNaver
+        .map((r) => {
+          const bar = prevYmd ? (bars.get(r.code) ?? []).find((b) => b.ymd === prevYmd) : undefined;
+          return {
+            code: r.code,
+            name: r.name,
+            price: bar?.close ?? r.price,
+            changeRatePct: null as number | null,
+            volume: bar?.volume ?? null,
+            tradingValue: prevYmd ? approx(r.code, prevYmd) : null,
+          };
+        })
+        .filter((r) => r.tradingValue != null);
+      const bRows = poolNaver
+        .map((r) => {
+          const use = sessions.slice(0, 5);
+          const vals = use.map((ymd) => approx(r.code, ymd)).filter((n): n is number => n != null && n > 0);
+          const last = (bars.get(r.code) ?? [])[0];
+          return {
+            code: r.code,
+            name: nameOf.get(r.code) ?? r.name,
+            price: last?.close ?? quoteOf.get(r.code)?.price ?? null,
+            changeRatePct: quoteOf.get(r.code)?.changeRatePct ?? null,
+            volume: last?.volume ?? null,
+            tradingValue: vals.length ? vals.reduce((x, y) => x + y, 0) / vals.length : null,
+          };
+        })
+        .filter((r) => r.tradingValue != null);
+      if (cRows.some((r) => (r.tradingValue ?? 0) > 0)) {
+        todayTv = topByValue(cRows, todayTop, false);
+        valueEstimated = false;
+      }
+      if (aRows.length >= 40) prevTv = topByValue(aRows, PREV_TV_TOP, true);
+      if (bRows.length >= 40) avg5Tv = topByValue(bRows, AVG5_TV_TOP, true);
+      valueEstimated = prevTv.some((r) => r.tradingValueEstimated) || avg5Tv.some((r) => r.tradingValueEstimated);
+      notes.push(
+        baseYmd
+          ? `KRX 전종목이 비어 네이버 보통주 풀 ${poolNaver.length}종목입니다. 가져온 목록은 A ${prevTv.length} + B ${avg5Tv.length} + C ${todayTv.length}이고, 서로 겹친 뒤 합집합은 ${new Set([...prevTv, ...avg5Tv, ...todayTv].map((r) => r.code)).size}종목입니다. A는 ${prevYmd || "전 세션"} 종가×거래량 근사, B는 최근 ${Math.min(5, sessions.length)}세션 평균 근사, C는 거래대금. 기준일 ${baseYmd}. 이 풀(각 순위 최대 100) 밖 종목은 넣지 않습니다.`
+          : `네이버 시세는 ${poolNaver.length}종목인데 일별 거래량이 부족해 당일 거래대금만 사용합니다.`,
+      );
+    }
+  } else if (avgFromKrx.length >= 40) {
+    avg5Tv = mergeRanked(avgFromKrx, avgFromKis, AVG5_TV_TOP);
+  }
 
   const changeRate = chgRowsF.slice(0, 30).map((r) => toRanked(r, "change_rate"));
 
-  const capByCode = new Map<string, number>();
+  const capByCode = new Map<string, number>(naverCap);
   for (const r of krxToday) {
     if (r.marketCapEok != null) capByCode.set(r.code, r.marketCapEok);
   }
@@ -355,8 +579,9 @@ export async function buildUniverse(
       `A∪B∪C가 비었습니다. 전일 ${prevTv.length} · 5일평균 ${avg5Tv.length} · 당일 ${todayTv.length}. ETF·관리·신규상장 ${excluded}건 제외. 숫자를 지어내지 않습니다.`,
     );
   } else {
+    const onlyC = [...cSet].filter((c) => !aSet.has(c) && !bSet.has(c)).length;
     notes.push(
-      `A∪B∪C = ${selected.length}종목 (전일상위${PREV_TV_TOP} ∪ 5일평균상위${AVG5_TV_TOP} ∪ 당일상위${todayTop}). ETF·관리·신규상장 ${excluded}건 제외. 주도주 점수 순.`,
+      `A∪B∪C = ${selected.length}종목 (전일 ${prevTv.length}/${PREV_TV_TOP} ∪ 5일평균 ${avg5Tv.length}/${AVG5_TV_TOP} ∪ 당일 ${todayTv.length}/${todayTop}, 당일에만 있는 종목 ${onlyC}). ETF·관리·신규상장 ${excluded}건 제외. 주도주 점수 순.${valueEstimated ? " A·B 대금은 종가×거래량 근사입니다." : ""}${baseYmd ? ` 기준일 ${baseYmd}.` : ""}`,
     );
   }
 

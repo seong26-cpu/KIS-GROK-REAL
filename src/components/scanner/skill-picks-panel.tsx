@@ -4,7 +4,7 @@ import { Card, CardDesc, CardHeader, CardTitle } from "@/components/ui/card";
 import { AnalysisPanel, MarketPanel } from "@/components/scanner/extra-menus";
 import type { BrokerCreds } from "@/lib/scanner/types";
 import { SKILL_PROMPTS, SKILL_STEPS, type SkillPicksResult } from "@/lib/scanner/skill-picks";
-import { fmtPct, fmtWon } from "@/lib/utils";
+import { downloadCsv, fmtPct, fmtWon } from "@/lib/utils";
 
 export function SkillPicksPanel({
   creds,
@@ -64,6 +64,26 @@ export function SkillPicksPanel({
         <div className="flex items-center gap-2">
           <Button type="submit" disabled={loading || !creds || !q.trim()}>
             {loading ? "분석 중…" : "분석 STOCK 실행"}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={!result}
+            onClick={() => {
+              if (!result) return;
+              const reports = result.reports?.length ? result.reports : result.report ? [result.report] : [];
+              downloadCsv(
+                `분석STOCK_${new Date().toISOString().slice(0, 10)}.csv`,
+                ["종류", "코드", "종목", "현재가", "등락", "요약"],
+                [
+                  ...reports.map((r) => ["분석", r.stockCode, r.stockName, r.currentPrice, r.changeRatePct, r.summary ?? r.marketReason]),
+                  ...(result.cheap ?? []).map((r) => ["저가", r.code, r.name, r.price, r.changePct, r.note]),
+                  ...(result.market?.leaders ?? []).map((r) => ["시황주도", r.code, r.name, r.price, r.change, ""]),
+                ],
+              );
+            }}
+          >
+            CSV
           </Button>
           {!creds ? <span className="text-xs text-fg-subtle">KIS 키가 있어야 시세를 붙입니다.</span> : null}
         </div>

@@ -310,15 +310,20 @@ export function evaluateClosingBetCandidate(
   };
 }
 
+/** 15시 종가배팅 추출: 거래대금이 있는 종목을 대금 순으로 먼저 둔다. 조건 점수만으로 거래대금 1위를 밀지 않는다. */
 export function rankClosingBetCandidates(
   candidates: ClosingBetCandidate[],
   topN = 10,
 ): ClosingBetCandidate[] {
   return [...candidates]
     .sort((a, b) => {
+      const av = a.tradingValueToday ?? 0;
+      const bv = b.tradingValueToday ?? 0;
+      const aHas = av > 0;
+      const bHas = bv > 0;
+      if (aHas !== bHas) return aHas ? -1 : 1;
+      if (bv !== av) return bv - av;
       if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
-      const tv = (b.tradingValueToday ?? 0) - (a.tradingValueToday ?? 0);
-      if (tv !== 0) return tv;
       return a.stockCode.localeCompare(b.stockCode);
     })
     .slice(0, topN);
