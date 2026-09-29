@@ -1,5 +1,5 @@
-import type { CheckItem, ClosingBetCandidate, LiveSnapshot, MarketIndex } from "./types";
-import { computeAtr, computeRsi, countConsecutiveNetBuyDays } from "./indicators";
+import type { CheckItem, ClosingBetCandidate, DailyBar, LiveSnapshot, MarketIndex } from "./types";
+import { computeAtr, computeRsi, countConsecutiveNetBuyDays, toNum } from "./indicators";
 
 export const TRADING_VALUE_TOP_N = 20;
 export const CHANGE_RATE_TOP_N = 10;
@@ -29,6 +29,51 @@ function fmtPct(v: number | null | undefined) {
 }
 function fmtWon(v: number | null | undefined) {
   return v == null ? "미확보" : `${Math.round(v).toLocaleString("ko-KR")}원`;
+}
+
+function barClose(bar: DailyBar | undefined): number | null {
+  return toNum(bar?.stck_clpr);
+}
+
+/** 직전 거래일 등락. 일봉이 없으면 null. 없는 숫자를 만들지 않는다. */
+export function prevSessionChangePct(daily: DailyBar[]): number | null {
+  const prev = barClose(daily[1]);
+  const before = barClose(daily[2]);
+  if (prev == null || before == null || before === 0) return null;
+  return ((prev - before) / before) * 100;
+}
+
+export function volumeMultiple(snap: LiveSnapshot): number | null {
+  const today = snap.volume ?? toNum(snap.dailyPrices[0]?.acml_vol);
+  const prior = snap.dailyPrices
+    .slice(1, 21)
+    .map((b) => toNum(b.acml_vol))
+    .filter((n): n is number => n != null && n > 0);
+  if (today == null || prior.length < 5) return null;
+  const avg = prior.reduce((a, b) => a + b, 0) / prior.length;
+  return avg > 0 ? today / avg : null;
+}
+
+/**
+ * 9/28 종가 → 9/29 시초에서 갈린 차이.
+ * 한화솔루션 +17% 고점 마감, SK이노베이션 이틀 연속 +5%는 시초 매도가 나왔고
+ * LG이노텍은 전일 하락 다음 하루 급등 후 고점에서 되돌려 마감했다.
+ * 당일 +12% 이상, 전일·당일 모두 +5% 이상, 거래량 4배 이상이면서 +10%면 추격으로 본다.
+ */
+export function chaseBlockReason(snap: LiveSnapshot): string | null {
+  const chg = snap.changeRatePct;
+  const prev = prevSessionChangePct(snap.dailyPrices);
+  const vol = volumeMultiple(snap);
+  const parts: string[] = [];
+  if (chg != null && chg >= 12) parts.push(`당일 ${fmtPct(chg)} (12% 이상 마감)`);
+  if (chg != null && prev != null && chg >= 5 && prev >= 5) {
+    parts.push(`전일 ${fmtPct(prev)} · 당일 ${fmtPct(chg)} 연속 급등`);
+  }
+  if (vol != null && vol >= 4 && (chg ?? 0) >= 10) {
+    parts.push(`거래량 ${vol.toFixed(1)}배 · 당일 ${fmtPct(chg)} 과열`);
+  }
+  if (!parts.length) return null;
+  return parts.join(" · ");
 }
 
 export function evaluateClosingBetCandidate(
@@ -89,6 +134,9 @@ export function evaluateClosingBetCandidate(
   }
 
   let pullbackPct: number | null = null;
+  const chaseWhy = chaseBlockReason(snap);
+  const chaseBlocked = chaseWhy != null;
+  const prevChg = prevSessionChangePct(snap.dailyPrices);
   if (snap.highPrice == null || snap.currentPrice == null || snap.highPrice === 0) {
     conditions.push({
       label: CONDITION_LABELS[3],
@@ -97,13 +145,52 @@ export function evaluateClosingBetCandidate(
     });
   } else {
     pullbackPct = ((snap.highPrice - snap.currentPrice) / snap.highPrice) * 100;
-    const ok = pullbackPct >= 0 && pullbackPct <= 3;
-    conditions.push({
-      label: CONDITION_LABELS[3],
-      status: ok ? "pass" : "fail",
-      detail: `당일 고가 대비 ${pullbackPct.toFixed(1)}% (일봉 근사 — 09~10시 분봉 패턴은 미연동, 차트 직접 확인 권장)`,
-    });
+    const chg = snap.changeRatePct;
+    const digested = pullbackPct > 3 && pullbackPct <= 8 && (chg ?? 0) > 0 && (chg ?? 99) < 12 && !chaseBlocked;
+    const nearHighOk = pullbackPct >= 0 && pullbackPct <= 3 && (chg == null || chg < 10) && !chaseBlocked;
+    if (chaseBlocked && pullbackPct <= 4) {
+      conditions.push({
+        label: CONDITION_LABELS[3],
+        status: "fail",
+        detail: `고가 대비 ${pullbackPct.toFixed(1)}%로 고점 근처 마감. ${chaseWhy}. 이 형태는 다음날 시초부터 매도 우위가 나온 사례가 있어 통과로 세지 않습니다.`,
+      });
+    } else if (nearHighOk) {
+      conditions.push({
+        label: CONDITION_LABELS[3],
+        status: "pass",
+        detail: `당일 고가 대비 ${pullbackPct.toFixed(1)}%. 과열 마감은 아닙니다.`,
+      });
+    } else if (digested) {
+      conditions.push({
+        label: CONDITION_LABELS[3],
+        status: "pass",
+        detail: `장중 고점 대비 ${pullbackPct.toFixed(1)}% 되돌려 마감. 윗꼬리를 메우는 시초 매수세가 있는지는 다음날 확인.`,
+      });
+    } else {
+      conditions.push({
+        label: CONDITION_LABELS[3],
+        status: "fail",
+        detail: `당일 고가 대비 ${pullbackPct.toFixed(1)}%. ${chaseBlocked ? chaseWhy : "고점 밀착도 장중 분봉은 일봉으로 근사합니다."}`,
+      });
+    }
   }
+
+  conditions.push(
+    chaseBlocked
+      ? {
+          label: "과열 추격 배제",
+          status: "fail",
+          detail: `${chaseWhy}. 전일 등락 ${fmtPct(prevChg)}. 같은 3/5여도 이 칸에서 갈립니다.`,
+        }
+      : {
+          label: "과열 추격 배제",
+          status: snap.changeRatePct == null && prevChg == null ? "unknown" : "pass",
+          detail:
+            snap.changeRatePct == null && prevChg == null
+              ? "당일·전일 등락을 모두 못 받아 과열 여부를 판단하지 않습니다."
+              : `당일 ${fmtPct(snap.changeRatePct)} · 전일 ${fmtPct(prevChg)}. 12% 이상 마감, 이틀 연속 +5%, 거래량 4배의 +10% 마감은 아닙니다.`,
+        },
+  );
 
   const news = snap.newsItems;
   if (news == null) {
@@ -142,11 +229,17 @@ export function evaluateClosingBetCandidate(
       status: "unknown",
       detail: "평균 거래량 대비 비율 산출 불가 (데이터 부족)",
     });
+  } else if (volRatio >= 4 && (snap.changeRatePct ?? 0) >= 10) {
+    quality.push({
+      label: QUALITY_LABELS[0],
+      status: "fail",
+      detail: `최근 평균 대비 거래량 약 ${volRatio.toFixed(1)}배 · 당일 ${fmtPct(snap.changeRatePct)}. 3~5배 증가가 아니라 급등일 거래 폭증이라 통과로 세지 않습니다.`,
+    });
   } else {
     quality.push({
       label: QUALITY_LABELS[0],
-      status: volRatio >= 3 ? "pass" : "fail",
-      detail: `최근 평균 대비 거래량 약 ${volRatio.toFixed(1)}배 (근사치) · 매수체결강도는 실시간 체결 미연동으로 판단불가`,
+      status: volRatio >= 3 && volRatio <= 5 ? "pass" : "fail",
+      detail: `최근 평균 대비 거래량 약 ${volRatio.toFixed(1)}배 (일봉 근사, 기준 3~5배) · 매수체결강도는 실시간 체결 미연동`,
     });
   }
 
@@ -300,6 +393,7 @@ export function evaluateClosingBetCandidate(
     stopLoss,
     stopLossBasis: stopBasis,
     riskNotes: [
+      ...(chaseBlocked ? [`추격제외: ${chaseWhy}`] : []),
       ...extraRisk,
       "목표가/손절가는 규칙 기반 근사치이며 확정된 미래 예측이 아닙니다.",
       "뉴스·공매도·실시간 호가는 직접 확인 후 매매하세요.",
@@ -307,16 +401,20 @@ export function evaluateClosingBetCandidate(
     ],
     matchScore,
     rankSources,
+    chaseBlocked,
   };
 }
 
-/** 15시 종가배팅 추출: 거래대금이 있는 종목을 대금 순으로 먼저 둔다. 조건 점수만으로 거래대금 1위를 밀지 않는다. */
+/** 15시 종가배팅: 과열 마감은 거래대금이 커도 뒤로. 나머지는 거래대금, 같으면 조건 점수. */
 export function rankClosingBetCandidates(
   candidates: ClosingBetCandidate[],
   topN = 10,
 ): ClosingBetCandidate[] {
   return [...candidates]
     .sort((a, b) => {
+      const aBlock = a.chaseBlocked ? 1 : 0;
+      const bBlock = b.chaseBlocked ? 1 : 0;
+      if (aBlock !== bBlock) return aBlock - bBlock;
       const av = a.tradingValueToday ?? 0;
       const bv = b.tradingValueToday ?? 0;
       const aHas = av > 0;

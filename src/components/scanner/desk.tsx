@@ -177,14 +177,15 @@ export function ScannerDesk({
     if (kind === "closing") {
       downloadCsv(
         `종가배팅_${stamp}.csv`,
-        ["코드", "종목", "현재가", "등락%", "거래대금", "충족점수", "근거", "매수목표", "손절"],
+        ["코드", "종목", "현재가", "등락%", "거래대금", "충족점수", "추격제외", "근거", "매수목표", "손절"],
         closing.map((c) => [
           c.stockCode,
           c.stockName,
           c.currentPrice,
           c.changeRatePct,
           c.tradingValueToday,
-          c.matchScore,
+          `${c.matchScore}/${c.conditions.length || 5}`,
+          c.chaseBlocked ? "예" : "아니오",
           c.reasonSummary,
           c.targetPrice,
           c.stopLoss,
@@ -890,7 +891,7 @@ export function ScannerDesk({
               <section className="flex flex-col gap-3">
                 <h2 className="text-lg font-semibold">종가베팅 후보</h2>
                 <p className="text-sm text-fg-muted">
-                  15시 종가 기준 거래대금이 큰 순서입니다. 조건 점수만으로 거래대금 상위를 밀어내지 않습니다. 충족 조건은 펼쳐서 확인합니다.
+                  15시 종가, 거래대금 순입니다. 다만 당일 +12% 이상, 전일·당일 모두 +5% 이상, 거래량이 평소의 4배이면서 +10%로 마감한 종목은 대금이 커도 목록 아래로 내립니다. 고점 바로 아래 마감은 그 경우 통과로 세지 않습니다.
                 </p>
                 <Button type="button" variant="secondary" className="h-8 self-start px-2 text-xs" disabled={!closing.length} onClick={() => exportCsv("closing")}>
                   <Download className="size-3.5" />
@@ -915,7 +916,8 @@ export function ScannerDesk({
                           </button>
                         </CardTitle>
                         <CardDesc>
-                          충족 {c.matchScore}/5 · {c.reasonSummary}
+                          충족 {c.matchScore}/{c.conditions.length || 5}
+                          {c.chaseBlocked ? " · 추격제외" : ""} · {c.reasonSummary}
                           {c.verifyNote ? ` · ${c.verifyNote}` : ""}
                         </CardDesc>
                       </CardHeader>

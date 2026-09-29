@@ -95,6 +95,8 @@ export type ClosingBetCandidate = {
   riskNotes: string[];
   matchScore: number;
   rankSources: string[];
+  /** 당일·전일 급등 마감이면 true. 거래대금 순 정렬에서 뒤로 보낸다. */
+  chaseBlocked?: boolean;
   verifyNote?: string;
 };
 
