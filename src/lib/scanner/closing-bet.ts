@@ -55,15 +55,22 @@ export function volumeMultiple(snap: LiveSnapshot): number | null {
 }
 
 /**
- * 9/28 종가 → 9/29 시초에서 갈린 차이.
- * 한화솔루션 +17% 고점 마감, SK이노베이션 이틀 연속 +5%는 시초 매도가 나왔고
- * LG이노텍은 전일 하락 다음 하루 급등 후 고점에서 되돌려 마감했다.
- * 당일 +12% 이상, 전일·당일 모두 +5% 이상, 거래량 4배 이상이면서 +10%면 추격으로 본다.
+ * 추격 마감은 다음날 시초 위로 잘 안 간다.
+ * - 당일 +12%, 이틀 연속 +5%, 거래량 4배의 +10% (9/28 한화·SK)
+ * - 전일이 이미 상승인데 당일 +6% 이상으로 고점(고가 대비 1.5% 이내) 마감 (9/29 대덕전자)
+ * 전일 하락 다음 하루 급등(한미반도체·주성·HPSP·삼화콘덴서)은 여기서 빼지 않는다.
  */
 export function chaseBlockReason(snap: LiveSnapshot): string | null {
   const chg = snap.changeRatePct;
   const prev = prevSessionChangePct(snap.dailyPrices);
   const vol = volumeMultiple(snap);
+  const price = snap.currentPrice ?? barClose(snap.dailyPrices[0]);
+  const base = barClose(snap.dailyPrices[2]);
+  const twoSess = price != null && base != null && base > 0 ? ((price - base) / base) * 100 : null;
+  const pullback =
+    snap.highPrice != null && price != null && snap.highPrice > 0
+      ? ((snap.highPrice - price) / snap.highPrice) * 100
+      : null;
   const parts: string[] = [];
   if (chg != null && chg >= 12) parts.push(`당일 ${fmtPct(chg)} (12% 이상 마감)`);
   if (chg != null && prev != null && chg >= 5 && prev >= 5) {
@@ -71,6 +78,13 @@ export function chaseBlockReason(snap: LiveSnapshot): string | null {
   }
   if (vol != null && vol >= 4 && (chg ?? 0) >= 10) {
     parts.push(`거래량 ${vol.toFixed(1)}배 · 당일 ${fmtPct(chg)} 과열`);
+  }
+  if (chg != null && prev != null && prev > 0 && chg >= 6 && pullback != null && pullback <= 1.5) {
+    parts.push(
+      `전일 ${fmtPct(prev)} 이미 상승한 뒤 고가 대비 ${pullback.toFixed(1)}% 마감${
+        twoSess != null ? ` · 2세션 ${fmtPct(twoSess)}` : ""
+      }`,
+    );
   }
   if (!parts.length) return null;
   return parts.join(" · ");

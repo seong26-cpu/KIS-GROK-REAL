@@ -891,7 +891,7 @@ export function ScannerDesk({
               <section className="flex flex-col gap-3">
                 <h2 className="text-lg font-semibold">종가베팅 후보</h2>
                 <p className="text-sm text-fg-muted">
-                  15시 종가, 거래대금 순입니다. 다만 당일 +12% 이상, 전일·당일 모두 +5% 이상, 거래량이 평소의 4배이면서 +10%로 마감한 종목은 대금이 커도 목록 아래로 내립니다. 고점 바로 아래 마감은 그 경우 통과로 세지 않습니다.
+                  15시 종가, 거래대금 순입니다. 당일 +12%, 전일·당일 모두 +5%, 거래량 4배의 +10% 마감, 그리고 전일이 이미 오른 뒤 +6% 이상으로 고점에 붙어 마감한 종목은 대금이 커도 아래로 내립니다. 전일 하락 다음 하루 급등은 빼지 않습니다.
                 </p>
                 <Button type="button" variant="secondary" className="h-8 self-start px-2 text-xs" disabled={!closing.length} onClick={() => exportCsv("closing")}>
                   <Download className="size-3.5" />
